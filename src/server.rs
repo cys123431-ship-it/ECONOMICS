@@ -6,6 +6,24 @@ use std::{
     time::Duration,
 };
 
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+
+const DASHBOARD_HTML: &str = r#"<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ECONOMICS Radar</title><style>body{font-family:system-ui;max-width:1000px;margin:40px auto;padding:0 20px;background:#111;color:#eee}pre{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}.muted{color:#aaa}</style><h1>ECONOMICS Radar</h1><p class="muted">Canonical v4 ULTRA rule engine · missing data is shown as null</p><pre id="snapshot">Loading…</pre><script src="/app.js"></script></html>"#;
+
+const DASHBOARD_JS: &str = r#"async function refresh() {
+  const target = document.querySelector('#snapshot');
+  try {
+    const response = await fetch('/api/snapshot', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    target.textContent = JSON.stringify(await response.json(), null, 2);
+  } catch (error) {
+    target.textContent = `데이터를 불러오지 못했습니다: ${error.message}`;
+  }
+}
+refresh();
+setInterval(refresh, 60000);
+"#;
+
 pub fn serve(host: &str, db_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     serve_with_ready(host, db_path, || {})
 }
@@ -75,11 +93,17 @@ fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::erro
                 &body,
             )
         }
+        "/app.js" => respond(
+            &mut stream,
+            "200 OK",
+            "application/javascript; charset=utf-8",
+            DASHBOARD_JS,
+        ),
         "/" => respond(
             &mut stream,
             "200 OK",
             "text/html; charset=utf-8",
-            r#"<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ECONOMICS Radar</title><style>body{font-family:system-ui;max-width:1000px;margin:40px auto;padding:0 20px;background:#111;color:#eee}pre{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}.muted{color:#aaa}</style><h1>ECONOMICS Radar</h1><p class="muted">Canonical v4 ULTRA rule engine · missing data is shown as null</p><pre id="snapshot">loading…</pre><script>async function refresh(){const response=await fetch('/api/snapshot',{cache:'no-store'});document.querySelector('#snapshot').textContent=JSON.stringify(await response.json(),null,2)}refresh();setInterval(refresh,60000)</script></html>"#,
+            DASHBOARD_HTML,
         ),
         _ => respond(
             &mut stream,
@@ -98,8 +122,23 @@ fn respond(
 ) -> Result<(), Box<dyn std::error::Error>> {
     write!(
         stream,
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: default-src 'self'; style-src 'unsafe-inline'\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nContent-Security-Policy: {CONTENT_SECURITY_POLICY}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_uses_a_same_origin_script_allowed_by_csp() {
+        assert!(DASHBOARD_HTML.contains("<script src=\"/app.js\"></script>"));
+        assert!(!DASHBOARD_HTML.contains("<script>"));
+        assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
+        assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self'"));
+        assert!(DASHBOARD_JS.contains("fetch('/api/snapshot'"));
+        assert!(DASHBOARD_JS.contains("데이터를 불러오지 못했습니다"));
+    }
 }
