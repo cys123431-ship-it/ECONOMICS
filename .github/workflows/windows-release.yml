@@ -44,4 +44,3 @@ jobs:
         with:
           files: EconomicsRadar-Windows-x64.zip
           generate_release_notes: true
-
