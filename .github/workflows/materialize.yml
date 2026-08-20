@@ -1,0 +1,84 @@
+name: Materialize Clean Repository and Release
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: contains(github.event.head_commit.message, '[materialize-rust]')
+    runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.commit.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Materialize Rust source
+        run: python tools/materialize_project.py
+      - name: Materialize exact single v4 ULTRA gzip
+        run: python tools/materialize_rulebook.py
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and verify before clean commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo test
+          cargo run -- rulebook
+      - name: Commit clean repository state
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .env.example .gitignore Cargo.toml LICENSE README.md src .github/workflows/ci.yml .github/workflows/windows-build.yml assets/Market_Economy_Radar_Rulebook_v4_ULTRA.txt.gz
+          git rm -r assets/staging transport tools .github/workflows/materialize.yml
+          git commit -m "feat: finalize low-memory Rust radar with single v4 ULTRA rulebook [release]"
+          git push origin HEAD:main
+          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows-release:
+    needs: materialize
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.materialize.outputs.release_sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test
+      - name: Build Windows x64
+        run: cargo build --release
+      - name: Verify embedded v4 ULTRA rulebook
+        run: .\target\release\EconomicsRadar.exe rulebook
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\EconomicsRadar.exe dist\EconomicsRadar.exe
+          Copy-Item README.md dist\README.md
+          Copy-Item .env.example dist\.env.example
+          Compress-Archive -Path dist\* -DestinationPath EconomicsRadar-Windows-x64.zip -Force
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.2.0"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag EconomicsRadar-Windows-x64.zip --clobber
+          } else {
+            gh release create $tag EconomicsRadar-Windows-x64.zip --target "${{ needs.materialize.outputs.release_sha }}" --title "ECONOMICS Radar v0.2.0" --notes "Rust low-memory Windows x64 release with the v4 ULTRA 27,494-rule streaming engine."
+          }
