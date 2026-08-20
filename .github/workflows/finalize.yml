@@ -3,6 +3,7 @@ name: Finalize Rust v0.2.0
 on:
   push:
     branches: [ 'rust/finalize-v0.2.0' ]
+    paths: [ 'FINALIZE' ]
 
 permissions:
   contents: write
