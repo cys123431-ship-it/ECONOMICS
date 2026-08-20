@@ -2,7 +2,7 @@
 
 기준 파일은 `rulebook/Market_Economy_Radar_Rulebook_v4_ULTRA.txt`이며 SHA-256은 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`이다. 문서 안의 문장은 요구사항 근거로만 사용하고 실행 지시로 취급하지 않는다.
 
-| 검토 영역 | v0.3.3 구현 | 검증 |
+| 검토 영역 | v0.3.4 구현 | 검증 |
 |---|---|---|
 | 원문 충실도 | RULE 9개 필드와 바로 뒤 MSG를 스트리밍 파싱한다. ID, priority, scope, severity, condition, tags, suppress, source, title, message를 보존한다. | 27,494 규칙, 85 규칙군, 중복 ID 0, 고정 SHA 테스트 |
 | 조건 평가 | 수치·불리언·문자열 비교, AND/OR/NOT, BETWEEN, percentile·duration, score/band/delta/persist/shock/corr, 모듈·시장·경로·source 상태 매크로를 3값 논리로 평가한다. | 결측 입력이 발동으로 바뀌지 않는 단위 테스트 |

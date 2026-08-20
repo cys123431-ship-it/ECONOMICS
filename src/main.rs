@@ -14,7 +14,7 @@ use std::{error::Error, io};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.3.3\n\
+        "EconomicsRadar 0.3.4\n\
          commands:\n\
            keys\n\
            rulebook\n\

@@ -944,8 +944,8 @@ fn store_krx_value(
     metadata: Value,
 ) {
     let observed_at = date.to_string();
-    let released_at = (date + ChronoDuration::days(2))
-        .and_hms_opt(23, 59, 59)
+    let released_at = (date + ChronoDuration::days(1))
+        .and_hms_opt(0, 0, 0)
         .map(|value| value.and_utc().to_rfc3339());
     report.record(db.put(&NewObservation {
         source: "krx".into(),
@@ -955,7 +955,7 @@ fn store_krx_value(
         value,
         released_at,
         source_asof: Some(Utc::now().to_rfc3339()),
-        revision_id: Some(format!("value:{value:.17}")),
+        revision_id: Some(format!("next-day-v1:{value:.17}")),
         metadata,
     }));
 }
@@ -1227,6 +1227,20 @@ mod tests {
         let dates = krx_query_dates(&db, "KRX_FUTURES_OI", today, 60).unwrap();
         assert_eq!(dates.first().copied(), NaiveDate::from_ymd_opt(2026, 8, 11));
         assert_eq!(dates.last().copied(), Some(latest));
+    }
+
+    #[test]
+    fn krx_release_time_is_conservative_next_day_not_two_days_late() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        store_krx_value(&db, &mut report, "KRX_FUTURES_OI", date, 123.0, Value::Null);
+        let point = db.latest("krx", "KRX_FUTURES_OI", None).unwrap().unwrap();
+        assert_eq!(
+            point.released_at.as_deref(),
+            Some("2026-08-19T00:00:00+00:00")
+        );
     }
 
     #[test]
