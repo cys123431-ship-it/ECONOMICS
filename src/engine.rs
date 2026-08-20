@@ -524,7 +524,51 @@ const METRICS: &[MetricDef] = &[
     ),
     metric(
         "krx",
-        "KRX_BREADTH",
+        "KRX_KOSPI_RETURN",
+        "KOREA_MARKET_INTERNALS",
+        Axis::Stress,
+        false,
+        Transform::Absolute,
+        0.8,
+        3,
+        "krx-index-move",
+    ),
+    metric(
+        "krx",
+        "KRX_KOSDAQ_RETURN",
+        "KOREA_MARKET_INTERNALS",
+        Axis::Stress,
+        false,
+        Transform::Absolute,
+        0.8,
+        3,
+        "krx-index-move",
+    ),
+    metric(
+        "krx",
+        "KRX_FUTURES_OI",
+        "KOREA_MARKET_INTERNALS",
+        Axis::Vulnerability,
+        false,
+        Transform::PercentChange,
+        0.7,
+        3,
+        "krx-derivatives",
+    ),
+    metric(
+        "krx",
+        "KRX_KOSPI_BREADTH",
+        "KOREA_MARKET_INTERNALS",
+        Axis::Stress,
+        true,
+        Transform::Level,
+        0.8,
+        3,
+        "krx-breadth",
+    ),
+    metric(
+        "krx",
+        "KRX_KOSDAQ_BREADTH",
         "KOREA_MARKET_INTERNALS",
         Axis::Stress,
         true,
@@ -851,7 +895,13 @@ pub fn run_at(
         accumulator.sources.insert(query_source);
         accumulator.axes.insert(definition.axis);
     }
-    if let Some(breadth) = context.value("KRX_BREADTH") {
+    let krx_breadth = scoring::mean(
+        &["KRX_KOSPI_BREADTH", "KRX_KOSDAQ_BREADTH"]
+            .iter()
+            .filter_map(|series| context.value(series))
+            .collect::<Vec<_>>(),
+    );
+    if let Some(breadth) = krx_breadth {
         context.insert_number("BREADTH", breadth);
         context.insert_bool("MARKET_BREADTH:KOREA_EQUITY", true);
     }
@@ -1327,7 +1377,6 @@ mod tests {
             fred_api_key: None,
             ecos_api_key: None,
             krx_api_key: None,
-            krx_api_url: None,
             official_adapters_file: None,
             db_path: temporary.path().join("empty.db"),
             rulebook_path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1336,6 +1385,7 @@ mod tests {
             host: "127.0.0.1:0".into(),
             min_samples: 20,
             http_timeout_secs: 1,
+            krx_lookback_days: 60,
         };
         let snapshot = run_at(&db, &config, "2026-08-20T23:59:59Z", false).unwrap();
         assert_eq!(snapshot.global_risk, None);

@@ -1,8 +1,8 @@
 # ECONOMICS Radar
 
-시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.3.0은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
+시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.3.1은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
 
-## v0.3.0에서 보장하는 것
+## v0.3.1에서 보장하는 것
 
 - 정규 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
 - 85개 규칙군, 27,494개 규칙, 중복 ID 0개, 구문 구조 오류 0개를 시작 시 검증
@@ -33,14 +33,26 @@ Copy-Item .env.example .env
 
 - `FRED_API_KEY`: FRED/ALFRED 수집
 - `ECOS_API_KEY`: 한국은행 ECOS 수집
-- `KRX_API_KEY`, `KRX_API_URL`: KRX가 승인한 해당 Open API
+- `KRX_API_KEY`: KRX 인증키. 사용할 KRX 서비스는 별도 활용승인이 필요하며 URL은 프로그램에 내장됩니다.
 - `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 공식 JSON 응답의 필드 매핑 파일
+
+KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 아래 공식 서비스 URL을 내장합니다. KRX 사이트에서 실제로 사용할 서비스의 활용승인을 받아야 하며, 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
+
+- KOSPI 시리즈 일별시세정보
+- KOSDAQ 시리즈 일별시세정보
+- 유가증권 일별매매정보
+- 코스닥 일별매매정보
+- 선물 일별매매정보 (주식선물外)
+- 옵션 일별매매정보 (주식옵션外)
 
 키를 입력한 뒤 전체 수집은 다음과 같습니다.
 
 ```powershell
 .\EconomicsRadar.exe collect-fred 2000-01-01
 .\EconomicsRadar.exe collect-alfred 2000-01-01
+.\EconomicsRadar.exe collect-public
+.\EconomicsRadar.exe collect-ecos
+.\EconomicsRadar.exe collect-krx
 .\EconomicsRadar.exe collect-all 2000-01-01
 ```
 
@@ -51,6 +63,9 @@ keys
 rulebook
 collect-fred [start]
 collect-alfred [start]
+collect-public
+collect-ecos
+collect-krx
 collect-official
 collect-all [start]
 run [as-of]

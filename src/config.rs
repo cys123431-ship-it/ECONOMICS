@@ -7,13 +7,13 @@ pub struct Config {
     pub fred_api_key: Option<String>,
     pub ecos_api_key: Option<String>,
     pub krx_api_key: Option<String>,
-    pub krx_api_url: Option<String>,
     pub official_adapters_file: Option<PathBuf>,
     pub db_path: PathBuf,
     pub rulebook_path: PathBuf,
     pub host: String,
     pub min_samples: usize,
     pub http_timeout_secs: u64,
+    pub krx_lookback_days: usize,
 }
 
 fn strip_inline_comment(value: &str) -> &str {
@@ -93,7 +93,6 @@ impl Config {
             fred_api_key: value("FRED_API_KEY", &file),
             ecos_api_key: value("ECOS_API_KEY", &file),
             krx_api_key: value("KRX_API_KEY", &file),
-            krx_api_url: value("KRX_API_URL", &file),
             official_adapters_file: value("OFFICIAL_ADAPTERS_FILE", &file).map(PathBuf::from),
             db_path: PathBuf::from(
                 value("ECONOMICS_DB", &file).unwrap_or_else(|| "runtime/economics.db".into()),
@@ -108,6 +107,10 @@ impl Config {
             http_timeout_secs: value("ECONOMICS_HTTP_TIMEOUT_SECS", &file)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(30),
+            krx_lookback_days: value("ECONOMICS_KRX_LOOKBACK_DAYS", &file)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60)
+                .clamp(20, 365),
         }
     }
 
@@ -119,14 +122,6 @@ impl Config {
         ] {
             println!("{name}: {}", if present { "configured" } else { "missing" });
         }
-        println!(
-            "KRX_API_URL: {}",
-            if self.krx_api_url.is_some() {
-                "configured"
-            } else {
-                "missing"
-            }
-        );
         println!("rulebook: {}", self.rulebook_path.display());
         println!(
             "official adapters: {}",

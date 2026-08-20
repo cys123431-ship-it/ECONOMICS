@@ -14,12 +14,15 @@ use std::{error::Error, io};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.3.0\n\
+        "EconomicsRadar 0.3.1\n\
          commands:\n\
            keys\n\
            rulebook\n\
            collect-fred [start]\n\
            collect-alfred [start]\n\
+           collect-public\n\
+           collect-ecos\n\
+           collect-krx\n\
            collect-official\n\
            collect-all [start]\n\
            run [as-of]\n\
@@ -42,7 +45,7 @@ fn print_report(report: &CollectionReport) -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
+fn collect_public(config: &Config, db: &Db) -> CollectionReport {
     let mut report = CollectionReport::default();
     match collectors::collect_treasury(config, db) {
         Ok(result) => report.merge(result),
@@ -52,13 +55,18 @@ fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
         Ok(result) => report.merge(result),
         Err(error) => report.errors.push(format!("binance: {error}")),
     }
+    report
+}
+
+fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
+    let mut report = collect_public(config, db);
     if config.ecos_api_key.is_some() {
         match collectors::collect_ecos(config, db) {
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("ecos: {error}")),
         }
     }
-    if config.krx_api_url.is_some() {
+    if config.krx_api_key.is_some() {
         match collectors::collect_krx(config, db) {
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("krx: {error}")),
@@ -95,6 +103,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             let db = Db::open(&config.db_path)?;
             let report = collect_official(&config, &db)?;
             print_report(&report)?;
+        }
+        "collect-public" => {
+            let db = Db::open(&config.db_path)?;
+            print_report(&collect_public(&config, &db))?;
+        }
+        "collect-ecos" => {
+            let db = Db::open(&config.db_path)?;
+            print_report(&collectors::collect_ecos(&config, &db)?)?;
+        }
+        "collect-krx" => {
+            let db = Db::open(&config.db_path)?;
+            print_report(&collectors::collect_krx(&config, &db)?)?;
         }
         "collect-all" => {
             let db = Db::open(&config.db_path)?;

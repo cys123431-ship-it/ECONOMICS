@@ -2,7 +2,7 @@ use crate::{
     config::Config,
     db::{Db, NewObservation},
 };
-use chrono::{SecondsFormat, Utc};
+use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc, Weekday};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -473,87 +473,317 @@ pub fn collect_ecos(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
     Ok(report)
 }
 
+#[derive(Clone, Copy)]
+enum KrxKind {
+    Index(&'static str),
+    Breadth(&'static str),
+    Futures,
+    Options,
+}
+
+struct KrxService {
+    name: &'static str,
+    api_id: &'static str,
+    path: &'static str,
+    kind: KrxKind,
+}
+
+const KRX_SERVICES: &[KrxService] = &[
+    KrxService {
+        name: "KOSPI 시리즈 일별시세정보",
+        api_id: "kospi_dd_trd",
+        path: "idx/kospi_dd_trd",
+        kind: KrxKind::Index("KOSPI"),
+    },
+    KrxService {
+        name: "KOSDAQ 시리즈 일별시세정보",
+        api_id: "kosdaq_dd_trd",
+        path: "idx/kosdaq_dd_trd",
+        kind: KrxKind::Index("KOSDAQ"),
+    },
+    KrxService {
+        name: "유가증권 일별매매정보",
+        api_id: "stk_bydd_trd",
+        path: "sto/stk_bydd_trd",
+        kind: KrxKind::Breadth("KOSPI"),
+    },
+    KrxService {
+        name: "코스닥 일별매매정보",
+        api_id: "ksq_bydd_trd",
+        path: "sto/ksq_bydd_trd",
+        kind: KrxKind::Breadth("KOSDAQ"),
+    },
+    KrxService {
+        name: "선물 일별매매정보 (주식선물外)",
+        api_id: "fut_bydd_trd",
+        path: "drv/fut_bydd_trd",
+        kind: KrxKind::Futures,
+    },
+    KrxService {
+        name: "옵션 일별매매정보 (주식옵션外)",
+        api_id: "opt_bydd_trd",
+        path: "drv/opt_bydd_trd",
+        kind: KrxKind::Options,
+    },
+];
+
 pub fn collect_krx(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
-    let Some(url) = config.krx_api_url.as_ref() else {
-        return Ok(CollectionReport::default());
-    };
     let key = config.krx_api_key.as_ref().ok_or("KRX_API_KEY missing")?;
-    let value: Value = client(config)?
-        .get(url)
-        .header("AUTH_KEY", key)
-        .send()?
-        .error_for_status()?
-        .json()?;
-    let rows = find_object_rows(&value).ok_or("KRX JSON contains no row array")?;
-    let aliases: &[(&str, &[&str])] = &[
-        (
-            "KRX_FOREIGN_NET_BUY",
-            &["FORN_NET_BUY", "FOREIGN_NET_BUY", "FRGN_NET_BUY"],
-        ),
-        (
-            "KRX_SHORT_BALANCE",
-            &["SHORT_BALANCE", "SHORT_BAL", "SRTSAL_BAL"],
-        ),
-        ("KRX_FUTURES_BASIS", &["FUTURES_BASIS", "BASIS"]),
-        ("KRX_PUT_CALL_RATIO", &["PUT_CALL_RATIO", "P_C_RATIO"]),
-        ("KRX_ADVANCES", &["ADVANCES", "UP_ISSUES"]),
-        ("KRX_DECLINES", &["DECLINES", "DOWN_ISSUES"]),
-    ];
+    let http = client(config)?;
     let mut report = CollectionReport::default();
-    for row in rows {
-        let date = ["TRD_DD", "BAS_DD", "DATE", "date"]
-            .iter()
-            .find_map(|field| row.get(*field).and_then(Value::as_str))
-            .map(normalize_compact_date)
-            .unwrap_or_else(|| Utc::now().date_naive().to_string());
-        for (series, fields) in aliases {
-            if let Some(number) = fields
-                .iter()
-                .find_map(|field| parse_number(row.get(*field)))
+    let today = Utc::now().date_naive();
+    let dates = (2..=config.krx_lookback_days + 2)
+        .rev()
+        .map(|offset| today - ChronoDuration::days(offset as i64))
+        .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+        .collect::<Vec<_>>();
+
+    for service in KRX_SERVICES {
+        let mut recognized = 0usize;
+        for date in &dates {
+            let response = match http
+                .get(format!(
+                    "https://data-dbg.krx.co.kr/svc/apis/{}",
+                    service.path
+                ))
+                .header("AUTH_KEY", key)
+                .query(&[("basDd", date.format("%Y%m%d").to_string())])
+                .send()
             {
-                report.record(db.put(&NewObservation {
-                    source: "krx".into(),
-                    series: (*series).into(),
-                    entity: String::new(),
-                    observed_at: date.clone(),
-                    value: number,
-                    released_at: Some(date_to_end_of_day(&date)),
-                    source_asof: Some(Utc::now().to_rfc3339()),
-                    revision_id: Some(format!("value:{number:.17}")),
-                    metadata: Value::Null,
-                }));
+                Ok(response) => response,
+                Err(error) => {
+                    report.error(service.api_id, error);
+                    break;
+                }
+            };
+            let status = response.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                report.error(
+                    service.api_id,
+                    format!(
+                        "KRX service not authorized; apply for '{}' in KRX Open API (HTTP {})",
+                        service.name, status
+                    ),
+                );
+                break;
             }
-        }
-        let advances = ["ADVANCES", "UP_ISSUES"]
-            .iter()
-            .find_map(|field| parse_number(row.get(*field)));
-        let declines = ["DECLINES", "DOWN_ISSUES"]
-            .iter()
-            .find_map(|field| parse_number(row.get(*field)));
-        if let (Some(advances), Some(declines)) = (advances, declines) {
-            if advances + declines > f64::EPSILON {
-                let breadth = 100.0 * advances / (advances + declines);
-                report.record(db.put(&NewObservation {
-                    source: "krx".into(),
-                    series: "KRX_BREADTH".into(),
-                    entity: String::new(),
-                    observed_at: date.clone(),
-                    value: breadth,
-                    released_at: Some(date_to_end_of_day(&date)),
-                    source_asof: Some(Utc::now().to_rfc3339()),
-                    revision_id: Some(format!("value:{breadth:.17}")),
-                    metadata: json!({"advances":advances,"declines":declines}),
-                }));
+            if !status.is_success() {
+                report.error(service.api_id, format!("HTTP {status}"));
+                if status.as_u16() == 429 {
+                    break;
+                }
+                continue;
             }
+            let value: Value = match response.json() {
+                Ok(value) => value,
+                Err(error) => {
+                    report.error(service.api_id, error);
+                    continue;
+                }
+            };
+            let Some(rows) = value
+                .get("OutBlock_1")
+                .and_then(Value::as_array)
+                .or_else(|| find_object_rows(&value))
+            else {
+                continue;
+            };
+            recognized += store_krx_service(db, &mut report, service.kind, *date, rows);
         }
-    }
-    if report.attempted == 0 {
-        report.error(
-            "krx",
-            "no recognized market-internals fields in configured response",
-        );
+        if recognized == 0
+            && !report
+                .errors
+                .iter()
+                .any(|error| error.starts_with(service.api_id))
+        {
+            report.error(
+                service.api_id,
+                "no recognized rows in the requested lookback",
+            );
+        }
     }
     Ok(report)
+}
+
+fn store_krx_service(
+    db: &Db,
+    report: &mut CollectionReport,
+    kind: KrxKind,
+    date: NaiveDate,
+    rows: &[Value],
+) -> usize {
+    match kind {
+        KrxKind::Index(market) => store_krx_index(db, report, market, date, rows),
+        KrxKind::Breadth(market) => store_krx_breadth(db, report, market, date, rows),
+        KrxKind::Futures => store_krx_futures(db, report, date, rows),
+        KrxKind::Options => store_krx_options(db, report, date, rows),
+    }
+}
+
+fn store_krx_index(
+    db: &Db,
+    report: &mut CollectionReport,
+    market: &str,
+    date: NaiveDate,
+    rows: &[Value],
+) -> usize {
+    let target = if market == "KOSPI" {
+        "코스피"
+    } else {
+        "코스닥"
+    };
+    let Some(row) = rows.iter().find(|row| {
+        row.get("IDX_NM")
+            .and_then(Value::as_str)
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case(target) || name.trim() == market)
+    }) else {
+        return 0;
+    };
+    let mut stored = 0;
+    if let Some(value) = parse_number(row.get("CLSPRC_IDX")) {
+        store_krx_value(
+            db,
+            report,
+            &format!("KRX_{market}_CLOSE"),
+            date,
+            value,
+            json!({"index":target}),
+        );
+        stored += 1;
+    }
+    if let Some(value) = parse_number(row.get("FLUC_RT")) {
+        store_krx_value(
+            db,
+            report,
+            &format!("KRX_{market}_RETURN"),
+            date,
+            value,
+            json!({"index":target}),
+        );
+        stored += 1;
+    }
+    stored
+}
+
+fn store_krx_breadth(
+    db: &Db,
+    report: &mut CollectionReport,
+    market: &str,
+    date: NaiveDate,
+    rows: &[Value],
+) -> usize {
+    let changes = rows
+        .iter()
+        .filter_map(|row| {
+            parse_number(row.get("FLUC_RT")).or_else(|| parse_number(row.get("CMPPREVDD_PRC")))
+        })
+        .collect::<Vec<_>>();
+    let advances = changes.iter().filter(|value| **value > 0.0).count();
+    let declines = changes.iter().filter(|value| **value < 0.0).count();
+    if advances + declines == 0 {
+        return 0;
+    }
+    let breadth = 100.0 * advances as f64 / (advances + declines) as f64;
+    store_krx_value(
+        db,
+        report,
+        &format!("KRX_{market}_BREADTH"),
+        date,
+        breadth,
+        json!({"advances":advances,"declines":declines}),
+    );
+    1
+}
+
+fn store_krx_futures(
+    db: &Db,
+    report: &mut CollectionReport,
+    date: NaiveDate,
+    rows: &[Value],
+) -> usize {
+    let open_interest = rows
+        .iter()
+        .filter_map(|row| {
+            parse_number(row.get("OPNINT_QTY")).or_else(|| parse_number(row.get("OPEN_INT")))
+        })
+        .sum::<f64>();
+    if open_interest <= 0.0 {
+        return 0;
+    }
+    store_krx_value(
+        db,
+        report,
+        "KRX_FUTURES_OI",
+        date,
+        open_interest,
+        json!({"contracts":rows.len()}),
+    );
+    1
+}
+
+fn store_krx_options(
+    db: &Db,
+    report: &mut CollectionReport,
+    date: NaiveDate,
+    rows: &[Value],
+) -> usize {
+    let mut put_volume = 0.0;
+    let mut call_volume = 0.0;
+    for row in rows {
+        let label = ["RGHT_TP_NM", "PUT_CALL_TP_NM", "ISU_NM"]
+            .iter()
+            .find_map(|field| row.get(*field).and_then(Value::as_str))
+            .unwrap_or("")
+            .to_uppercase();
+        let volume = ["ACC_TRDVOL", "TRD_VOL"]
+            .iter()
+            .find_map(|field| parse_number(row.get(*field)))
+            .unwrap_or(0.0);
+        let tokens = label.split_whitespace().collect::<Vec<_>>();
+        if label.contains("풋") || label.contains("PUT") || tokens.contains(&"P") {
+            put_volume += volume;
+        } else if label.contains("콜") || label.contains("CALL") || tokens.contains(&"C") {
+            call_volume += volume;
+        }
+    }
+    if call_volume <= f64::EPSILON {
+        return 0;
+    }
+    let ratio = put_volume / call_volume;
+    store_krx_value(
+        db,
+        report,
+        "KRX_PUT_CALL_RATIO",
+        date,
+        ratio,
+        json!({"put_volume":put_volume,"call_volume":call_volume}),
+    );
+    1
+}
+
+fn store_krx_value(
+    db: &Db,
+    report: &mut CollectionReport,
+    series: &str,
+    date: NaiveDate,
+    value: f64,
+    metadata: Value,
+) {
+    let observed_at = date.to_string();
+    let released_at = (date + ChronoDuration::days(2))
+        .and_hms_opt(23, 59, 59)
+        .map(|value| value.and_utc().to_rfc3339());
+    report.record(db.put(&NewObservation {
+        source: "krx".into(),
+        series: series.into(),
+        entity: String::new(),
+        observed_at,
+        value,
+        released_at,
+        source_asof: Some(Utc::now().to_rfc3339()),
+        revision_id: Some(format!("value:{value:.17}")),
+        metadata,
+    }));
 }
 
 #[derive(Debug, Deserialize)]
@@ -761,5 +991,42 @@ mod tests {
     fn nested_row_arrays_are_discovered() {
         let value = json!({"response":{"data":[{"DATE":"20260820","BASIS":"1.2"}]}});
         assert_eq!(find_object_rows(&value).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn krx_stock_rows_produce_market_breadth() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let rows = vec![
+            json!({"FLUC_RT":"1.2"}),
+            json!({"FLUC_RT":"-0.4"}),
+            json!({"FLUC_RT":"0.0"}),
+        ];
+        let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        assert_eq!(store_krx_breadth(&db, &mut report, "KOSPI", date, &rows), 1);
+        let point = db
+            .latest("krx", "KRX_KOSPI_BREADTH", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(point.value, 50.0);
+    }
+
+    #[test]
+    fn krx_option_rows_produce_put_call_ratio() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let rows = vec![
+            json!({"RGHT_TP_NM":"풋","ACC_TRDVOL":"300"}),
+            json!({"RGHT_TP_NM":"콜","ACC_TRDVOL":"200"}),
+        ];
+        let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        assert_eq!(store_krx_options(&db, &mut report, date, &rows), 1);
+        let point = db
+            .latest("krx", "KRX_PUT_CALL_RATIO", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(point.value, 1.5);
     }
 }

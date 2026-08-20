@@ -54,12 +54,18 @@ fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::erro
                 &body,
             )
         }
-        "/health" => respond(
-            &mut stream,
-            "200 OK",
-            "application/json; charset=utf-8",
-            r#"{"status":"ok","version":"0.3.0"}"#,
-        ),
+        "/health" => {
+            let body = format!(
+                r#"{{"status":"ok","version":"{}"}}"#,
+                env!("CARGO_PKG_VERSION")
+            );
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
         "/" => respond(
             &mut stream,
             "200 OK",
