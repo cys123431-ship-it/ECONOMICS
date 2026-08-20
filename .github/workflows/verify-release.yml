@@ -1,0 +1,31 @@
+name: Verify v0.2.0 Release
+
+on:
+  push:
+    branches: [ 'rust/finalize-v0.2.0' ]
+    paths: [ 'VERIFY_RELEASE' ]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Query release and record result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          gh release view v0.2.0 --repo "$GITHUB_REPOSITORY" --json tagName,name,url,isDraft,isPrerelease,assets > RELEASE_VERIFY.txt 2>&1
+          CODE=$?
+          printf '\nexit_code=%s\n' "$CODE" >> RELEASE_VERIFY.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add RELEASE_VERIFY.txt
+          git commit -m "chore: record release verification [release-verify]" || true
+          git push origin HEAD:rust/finalize-v0.2.0
