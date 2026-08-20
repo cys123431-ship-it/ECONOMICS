@@ -11,8 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-targets --all-features
       - run: cargo build --release
       - run: .\target\release\EconomicsRadar.exe rulebook
       - name: Package
@@ -21,10 +25,23 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target\release\EconomicsRadar.exe dist\EconomicsRadar.exe
           Copy-Item README.md dist\README.md
+          Copy-Item LICENSE dist\LICENSE
           Copy-Item .env.example dist\.env.example
+          Copy-Item rulebook dist\rulebook -Recurse
+          Copy-Item config dist\config -Recurse
+          Copy-Item docs dist\docs -Recurse
           Compress-Archive -Path dist\* -DestinationPath EconomicsRadar-Windows-x64.zip -Force
+      - name: Verify packaged executable and rulebook
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force packaged | Out-Null
+          Expand-Archive EconomicsRadar-Windows-x64.zip packaged -Force
+          Push-Location packaged
+          .\EconomicsRadar.exe rulebook
+          Pop-Location
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: EconomicsRadar-Windows-x64.zip
           generate_release_notes: true
+
