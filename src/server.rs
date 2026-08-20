@@ -6,23 +6,10 @@ use std::{
     time::Duration,
 };
 
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
-
-const DASHBOARD_HTML: &str = r#"<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ECONOMICS Radar</title><style>body{font-family:system-ui;max-width:1000px;margin:40px auto;padding:0 20px;background:#111;color:#eee}pre{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}.muted{color:#aaa}</style><h1>ECONOMICS Radar</h1><p class="muted">Canonical v4 ULTRA rule engine · missing data is shown as null</p><pre id="snapshot">Loading…</pre><script src="/app.js"></script></html>"#;
-
-const DASHBOARD_JS: &str = r#"async function refresh() {
-  const target = document.querySelector('#snapshot');
-  try {
-    const response = await fetch('/api/snapshot', { cache: 'no-store' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    target.textContent = JSON.stringify(await response.json(), null, 2);
-  } catch (error) {
-    target.textContent = `데이터를 불러오지 못했습니다: ${error.message}`;
-  }
-}
-refresh();
-setInterval(refresh, 60000);
-"#;
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const DASHBOARD_HTML: &str = include_str!("dashboard.html");
+const DASHBOARD_CSS: &str = include_str!("dashboard.css");
+const DASHBOARD_JS: &str = include_str!("dashboard.js");
 
 pub fn serve(host: &str, db_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     serve_with_ready(host, db_path, || {})
@@ -99,6 +86,12 @@ fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::erro
             "application/javascript; charset=utf-8",
             DASHBOARD_JS,
         ),
+        "/app.css" => respond(
+            &mut stream,
+            "200 OK",
+            "text/css; charset=utf-8",
+            DASHBOARD_CSS,
+        ),
         "/" => respond(
             &mut stream,
             "200 OK",
@@ -134,11 +127,17 @@ mod tests {
 
     #[test]
     fn dashboard_uses_a_same_origin_script_allowed_by_csp() {
-        assert!(DASHBOARD_HTML.contains("<script src=\"/app.js\"></script>"));
+        assert!(DASHBOARD_HTML.contains("src=\"/app.js\""));
+        assert!(DASHBOARD_HTML.contains("defer"));
         assert!(!DASHBOARD_HTML.contains("<script>"));
+        assert!(DASHBOARD_HTML.contains("href=\"/app.css\""));
+        assert!(!DASHBOARD_HTML.contains("<style>"));
         assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
+        assert!(CONTENT_SECURITY_POLICY.contains("style-src 'self'"));
         assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self'"));
         assert!(DASHBOARD_JS.contains("fetch('/api/snapshot'"));
         assert!(DASHBOARD_JS.contains("데이터를 불러오지 못했습니다"));
+        assert!(DASHBOARD_JS.contains("renderDashboard"));
+        assert!(DASHBOARD_CSS.contains(".risk-hero"));
     }
 }
