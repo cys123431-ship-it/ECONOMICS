@@ -3,6 +3,7 @@ name: Rust Bootstrap CI
 on:
   push:
     branches: [ 'rust/**' ]
+    paths: [ '.bootstrap-ready' ]
 
 permissions:
   contents: read
