@@ -1,0 +1,61 @@
+name: Release v0.2.0 Now
+
+on:
+  push:
+    branches: [ 'rust/finalize-v0.2.0' ]
+    paths: [ 'RELEASE_NOW' ]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests
+        run: cargo test
+      - name: Build Windows x64
+        run: cargo build --release
+      - name: Verify rule topology
+        run: .\target\release\EconomicsRadar.exe rulebook
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\EconomicsRadar.exe dist\EconomicsRadar.exe
+          Copy-Item README.md dist\README.md
+          Copy-Item .env.example dist\.env.example
+          Compress-Archive -Path dist\* -DestinationPath EconomicsRadar-Windows-x64.zip -Force
+      - name: Create or update release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.2.0"
+          $target = git rev-parse HEAD
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag EconomicsRadar-Windows-x64.zip --clobber
+          } else {
+            gh release create $tag EconomicsRadar-Windows-x64.zip --target $target --title "ECONOMICS Radar v0.2.0" --notes "Rust low-memory Windows x64 release. 85 deterministic v4 ULTRA rule families generate and evaluate exactly 27,494 procedural rules without keeping a large text rulebook resident in memory."
+          }
+      - name: Record release result
+        if: always()
+        shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin rust/finalize-v0.2.0
+          git checkout -B release-report origin/rust/finalize-v0.2.0
+          "status=$env:JOB_STATUS`nmain_sha=$(git rev-parse origin/main)`nutc=$(Get-Date -AsUTC -Format o)" | Set-Content WINDOWS_RELEASE_REPORT.txt
+          git add WINDOWS_RELEASE_REPORT.txt
+          git commit -m "chore: record Windows release result [release-report]" 2>$null
+          if ($LASTEXITCODE -eq 0) { git push origin HEAD:rust/finalize-v0.2.0 }
