@@ -1,0 +1,43 @@
+name: Rust Diagnostics
+
+on:
+  push:
+    branches: [ 'rust/finalize-v0.2.0' ]
+    paths-ignore: [ 'CI_REPORT.txt' ]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run diagnostics and persist report
+        shell: bash
+        run: |
+          set +e
+          : > CI_REPORT.txt
+          echo "== cargo fmt --check ==" >> CI_REPORT.txt
+          cargo fmt --all -- --check >> CI_REPORT.txt 2>&1
+          echo "FMT_EXIT=$?" >> CI_REPORT.txt
+          echo "== cargo test ==" >> CI_REPORT.txt
+          cargo test >> CI_REPORT.txt 2>&1
+          echo "TEST_EXIT=$?" >> CI_REPORT.txt
+          echo "== cargo clippy ==" >> CI_REPORT.txt
+          cargo clippy --all-targets >> CI_REPORT.txt 2>&1
+          echo "CLIPPY_EXIT=$?" >> CI_REPORT.txt
+          echo "== rule topology ==" >> CI_REPORT.txt
+          cargo run -- rulebook >> CI_REPORT.txt 2>&1
+          echo "RULE_EXIT=$?" >> CI_REPORT.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- CI_REPORT.txt
+          git commit -m "chore: record Rust diagnostics [ci-report]" || true
+          git push origin HEAD:rust/finalize-v0.2.0
