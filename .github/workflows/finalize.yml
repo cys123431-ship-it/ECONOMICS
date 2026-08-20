@@ -1,0 +1,84 @@
+name: Finalize Rust v0.2.0
+
+on:
+  push:
+    branches: [ 'rust/finalize-v0.2.0' ]
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    outputs:
+      release_sha: ${{ steps.publish.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format working tree
+        run: cargo fmt --all
+      - name: Unit tests
+        run: cargo test
+      - name: Clippy
+        run: cargo clippy --all-targets
+      - name: Verify v4 ULTRA procedural topology
+        run: cargo run -- rulebook
+      - name: Publish clean main commit
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          CLEAN_INDEX="$RUNNER_TEMP/economics-clean-index"
+          rm -f "$CLEAN_INDEX"
+          export GIT_INDEX_FILE="$CLEAN_INDEX"
+          git read-tree --empty
+          git add -- .env.example .gitignore Cargo.toml Cargo.lock LICENSE README.md src .github/workflows/ci.yml .github/workflows/windows-release.yml
+          TREE="$(git write-tree)"
+          PARENT="$(git rev-parse origin/main)"
+          COMMIT="$(printf '%s\n' 'feat: Rust low-memory ECONOMICS Radar v0.2.0' | git commit-tree "$TREE" -p "$PARENT")"
+          git push origin "$COMMIT:refs/heads/main"
+          echo "release_sha=$COMMIT" >> "$GITHUB_OUTPUT"
+
+  windows-release:
+    needs: validate-and-publish
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-and-publish.outputs.release_sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Unit tests on Windows
+        run: cargo test
+      - name: Build Windows x64
+        run: cargo build --release
+      - name: Verify procedural rule topology in EXE
+        run: .\target\release\EconomicsRadar.exe rulebook
+      - name: Package Windows release
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\EconomicsRadar.exe dist\EconomicsRadar.exe
+          Copy-Item README.md dist\README.md
+          Copy-Item .env.example dist\.env.example
+          Compress-Archive -Path dist\* -DestinationPath EconomicsRadar-Windows-x64.zip -Force
+      - name: Create or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v0.2.0"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag EconomicsRadar-Windows-x64.zip --clobber
+          } else {
+            gh release create $tag EconomicsRadar-Windows-x64.zip --target "${{ needs.validate-and-publish.outputs.release_sha }}" --title "ECONOMICS Radar v0.2.0" --notes "Rust low-memory Windows x64 release. v4 ULTRA topology is represented as 85 deterministic rule families and 27,494 procedural rules; no large text rulebook is kept resident in memory."
+          }
