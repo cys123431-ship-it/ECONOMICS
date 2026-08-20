@@ -916,7 +916,7 @@ FMT_EXIT=1
    [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
 [1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar" test) generated 1 warning
-[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 11.87s
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 6.43s
 [1m[92m     Running[0m unittests src/main.rs (target/debug/deps/EconomicsRadar-f144e76ca4dc720d)
 
 running 3 tests
@@ -1017,9 +1017,9 @@ TEST_EXIT=0
   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_as_bytes
   [1m[94m= [0m[1mnote[0m: `#[warn(clippy::needless_as_bytes)]` on by default
 
-[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar") generated 9 warnings (run `cargo clippy --fix --bin "EconomicsRadar" -p economics-radar -- ` to apply 3 suggestions)
-[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar" test) generated 4 warnings (3 duplicates)
-[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 5.32s
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar" test) generated 4 warnings (2 duplicates) (run `cargo clippy --fix --bin "EconomicsRadar" -p economics-radar --tests -- ` to apply 1 suggestion)
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar") generated 9 warnings (1 duplicate) (run `cargo clippy --fix --bin "EconomicsRadar" -p economics-radar -- ` to apply 2 suggestions)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 1.13s
 CLIPPY_EXIT=0
 == rule topology ==
 [1m[92m   Compiling[0m economics-radar v0.2.0 (/home/runner/work/ECONOMICS/ECONOMICS)
@@ -1071,7 +1071,7 @@ CLIPPY_EXIT=0
    [1m[94m= [0m[1mnote[0m: `RuleHit` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
 
 [1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar") generated 6 warnings
-[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.94s
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.84s
 [1m[92m     Running[0m `target/debug/EconomicsRadar rulebook`
 rules=27494 families=85 mode=procedural-v4-ultra low_memory=true
 RULE_EXIT=0
