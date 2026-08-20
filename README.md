@@ -1,8 +1,8 @@
 # ECONOMICS Radar
 
-시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.3.4는 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
+시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.4.0은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
 
-## v0.3.4에서 보장하는 것
+## v0.4.0에서 보장하는 것
 
 - 정규 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
 - 85개 규칙군, 27,494개 규칙, 중복 ID 0개, 구문 구조 오류 0개를 시작 시 검증
@@ -36,14 +36,16 @@ Copy-Item .env.example .env
 - `KRX_API_KEY`: KRX 인증키. 사용할 KRX 서비스는 별도 활용승인이 필요하며 URL은 프로그램에 내장됩니다.
 - `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 공식 JSON 응답의 필드 매핑 파일
 
-KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 아래 공식 서비스 URL을 내장합니다. KRX 사이트에서 실제로 사용할 서비스의 활용승인을 받아야 하며, 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
+KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 공식 URL을 내장합니다. v0.4.0은 KRX가 제공하는 아래 31개 승인 서비스를 모두 수집합니다. 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
 
-- KOSPI 시리즈 일별시세정보
-- KOSDAQ 시리즈 일별시세정보
-- 유가증권 일별매매정보
-- 코스닥 일별매매정보
-- 선물 일별매매정보 (주식선물外)
-- 옵션 일별매매정보 (주식옵션外)
+- 지수: KRX·KOSPI·KOSDAQ 시리즈 일별시세, 채권지수 시세, 파생상품지수 시세
+- 주식: 유가증권·코스닥·코넥스 일별매매, 신주인수권증권·신주인수권증서 일별매매, 유가증권·코스닥·코넥스 종목기본정보
+- ETP: ETF·ETN·ELW 일별매매
+- 채권: 국채전문유통시장·일반채권시장·소액채권시장 일별매매
+- 파생상품: 선물(주식선물 외), 유가·코스닥 주식선물, 옵션(주식옵션 외), 유가·코스닥 주식옵션 일별매매
+- 일반상품·ESG: 석유·금·배출권 시장 일별매매, ESG 증권상품, 사회책임투자채권, ESG 지수
+
+모든 서비스는 행 수와 서비스별 집계 계열을 저장합니다. KOSPI·KOSDAQ 시장폭, KOSPI200 선물 베이시스, KOSPI200 옵션 풋/콜은 룰북의 `KRX_BREADTH`, `KRX_BASIS`, `KRX_PUT_CALL`에 연결됩니다. 승인 목록에 없는 외국인 투자자별 순매수와 공매도 잔고는 추정값으로 만들지 않습니다.
 
 키를 입력한 뒤 전체 수집은 다음과 같습니다.
 
@@ -65,7 +67,7 @@ collect-fred [start] [series]
 collect-alfred [start] [series]
 collect-public
 collect-ecos [series]
-collect-krx
+collect-krx [api-id]
 collect-official
 collect-all [start]
 run [as-of]
@@ -79,6 +81,8 @@ demo
 FRED/ALFRED의 마지막 `series`는 선택사항입니다. 예를 들어 `collect-alfred 2000-01-01 ANFCI`는 해당 계열만 재수집합니다.
 
 ECOS도 `collect-ecos KR_USD_KRW`처럼 마지막 `series`를 지정해 한 계열만 재수집할 수 있습니다.
+
+KRX도 `collect-krx fut_bydd_trd`처럼 공식 API ID를 지정해 한 서비스만 재수집할 수 있습니다. 인자를 생략하면 31개 서비스를 모두 수집합니다.
 
 서버 기본 주소는 `http://127.0.0.1:8765`입니다. 엔드포인트는 `/`, `/api/snapshot`, `/health`이며 로컬 바인딩이 기본값입니다.
 

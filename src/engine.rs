@@ -502,18 +502,18 @@ const METRICS: &[MetricDef] = &[
     ),
     metric(
         "krx",
-        "KRX_FUTURES_BASIS",
+        "KRX_BASIS",
         "KOREA_MARKET_INTERNALS",
         Axis::Stress,
-        false,
-        Transform::Absolute,
+        true,
+        Transform::Level,
         0.7,
         3,
         "krx-derivatives",
     ),
     metric(
         "krx",
-        "KRX_PUT_CALL_RATIO",
+        "KRX_PUT_CALL",
         "KOREA_MARKET_INTERNALS",
         Axis::Stress,
         false,
@@ -554,6 +554,17 @@ const METRICS: &[MetricDef] = &[
         0.7,
         3,
         "krx-derivatives",
+    ),
+    metric(
+        "krx",
+        "KRX_BREADTH",
+        "KOREA_MARKET_INTERNALS",
+        Axis::Stress,
+        true,
+        Transform::Level,
+        0.8,
+        3,
+        "krx-breadth",
     ),
     metric(
         "krx",
@@ -895,15 +906,24 @@ pub fn run_at(
         accumulator.sources.insert(query_source);
         accumulator.axes.insert(definition.axis);
     }
-    let krx_breadth = scoring::mean(
-        &["KRX_KOSPI_BREADTH", "KRX_KOSDAQ_BREADTH"]
-            .iter()
-            .filter_map(|series| context.value(series))
-            .collect::<Vec<_>>(),
-    );
+    let krx_breadth = context.value("KRX_BREADTH").or_else(|| {
+        scoring::mean(
+            &["KRX_KOSPI_BREADTH", "KRX_KOSDAQ_BREADTH"]
+                .iter()
+                .filter_map(|series| context.value(series))
+                .collect::<Vec<_>>(),
+        )
+    });
     if let Some(breadth) = krx_breadth {
         context.insert_number("BREADTH", breadth);
+        context.insert_bool("KRX_BREADTH_WEAK", breadth < 40.0);
         context.insert_bool("MARKET_BREADTH:KOREA_EQUITY", true);
+    }
+    if let Some(basis) = context.value("KRX_BASIS") {
+        context.insert_bool("KRX_BASIS_NEGATIVE", basis < 0.0);
+    }
+    if let Some(risk) = context.value("METRIC_RISK:KRX_PUT_CALL") {
+        context.insert_bool("KRX_PUT_CALL_EXTREME", risk >= 90.0);
     }
 
     let mut nodes = HashMap::new();

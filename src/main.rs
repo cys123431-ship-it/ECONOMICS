@@ -14,7 +14,7 @@ use std::{error::Error, io};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.3.4\n\
+        "EconomicsRadar 0.4.0\n\
          commands:\n\
            keys\n\
            rulebook\n\
@@ -22,7 +22,7 @@ fn usage() {
            collect-alfred [start] [series]\n\
            collect-public\n\
            collect-ecos [series]\n\
-           collect-krx\n\
+           collect-krx [api-id]\n\
            collect-official\n\
            collect-all [start]\n\
            run [as-of]\n\
@@ -67,7 +67,7 @@ fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
         }
     }
     if config.krx_api_key.is_some() {
-        match collectors::collect_krx(config, db) {
+        match collectors::collect_krx(config, db, None) {
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("krx: {error}")),
         }
@@ -121,7 +121,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         "collect-krx" => {
             let db = Db::open(&config.db_path)?;
-            print_report(&collectors::collect_krx(&config, &db)?)?;
+            let service = std::env::args().nth(2);
+            print_report(&collectors::collect_krx(&config, &db, service.as_deref())?)?;
         }
         "collect-all" => {
             let db = Db::open(&config.db_path)?;
