@@ -1,22 +1,19 @@
-use crate::dsl::Context;
-use std::io;
+use crate::dsl::{self, Context, Truth};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    fs::File,
+    io::{self, BufRead, BufReader, Read},
+    path::Path,
+};
 
 pub const EXPECTED_RULES: usize = 27_494;
 pub const EXPECTED_FAMILIES: usize = 85;
+pub const CANONICAL_SHA256: &str =
+    "2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56";
 
-#[derive(Debug, Clone)]
-pub struct RuleHit {
-    pub id: String,
-    pub priority: String,
-    pub scope: String,
-    pub severity: String,
-    pub title: String,
-    pub message: String,
-}
-
-// Exact family cardinalities extracted from the v4 ULTRA canonical rulebook.
-// Runtime conditions are generated deterministically from the same dimension/module graph,
-// avoiding a 10+ MiB resident text rulebook and eliminating parser allocation overhead.
 pub const FAMILIES: &[(&str, usize)] = &[
     ("CR-P", 72),
     ("CR-S", 10),
@@ -105,237 +102,416 @@ pub const FAMILIES: &[(&str, usize)] = &[
     ("V4XOM", 1530),
 ];
 
-pub const DIMENSIONS: &[&str] = &[
-    "GROWTH",
-    "LABOR",
-    "INFLATION",
-    "RATES",
-    "TREASURY",
-    "CREDIT",
-    "BANKING",
-    "LIQUIDITY",
-    "FINCOND",
-    "LEVERAGE",
-    "VOLATILITY",
-    "USD",
-    "HOUSING",
-    "CONSUMER",
-    "CORP_HEALTH",
-    "FUNDING",
-    "KOREA_MACRO",
-    "CHINA_SPILLOVER",
-];
-pub const MODULES: &[&str] = &[
-    "VALUATION",
-    "BUSINESS_DEBT",
-    "US_HOUSEHOLD_DEBT",
-    "HEDGE_FUND_LEVERAGE",
-    "HEDGE_FUND_FUNDING",
-    "HF_COUNTERPARTY",
-    "DEALER_INTERMEDIATION",
-    "REPO_MICRO",
-    "MMF_FUNDING",
-    "MARGIN_COLLATERAL",
-    "TREASURY_AUCTION",
-    "TREASURY_BUYBACK_FLOW",
-    "FOREIGN_TREASURY_DEMAND",
-    "GLOBAL_DOLLAR_CREDIT",
-    "KOREA_FIN_STAB",
-    "KOREA_MARKET_INTERNALS",
-    "CRYPTO_DERIVATIVES",
-];
-const THRESHOLDS: &[f64] = &[25.0, 35.0, 45.0, 50.0, 60.0, 65.0, 75.0, 85.0];
-
-pub fn count_rules() -> usize {
-    FAMILIES.iter().map(|(_, n)| *n).sum()
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Rule {
+    pub id: String,
+    pub priority: u16,
+    pub scope: String,
+    pub severity: String,
+    pub condition: String,
+    pub tags: Vec<String>,
+    pub suppress: String,
+    pub source: String,
+    pub title: String,
+    pub message: String,
 }
 
-pub fn verify() -> io::Result<()> {
-    let count = count_rules();
-    if count != EXPECTED_RULES || FAMILIES.len() != EXPECTED_FAMILIES {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "rule topology mismatch: rules={count} families={}",
-                FAMILIES.len()
-            ),
-        ));
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum Channel {
+    Primary,
+    Confirmation,
+    CounterSignal,
+    DataQuality,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuleHit {
+    pub id: String,
+    pub priority: u16,
+    pub scope: String,
+    pub severity: String,
+    pub channel: Channel,
+    pub title: String,
+    pub message: String,
+    pub condition: String,
+    pub tags: Vec<String>,
+    pub source: String,
+    #[serde(skip)]
+    suppress: String,
+    #[serde(skip)]
+    specificity: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Verification {
+    pub sha256: String,
+    pub rules: usize,
+    pub families: usize,
+    pub duplicate_ids: usize,
+    pub invalid_conditions: usize,
+    pub sources: HashMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Evaluation {
+    pub rules_evaluated: usize,
+    pub rules_triggered: usize,
+    pub rules_indeterminate: usize,
+    pub hits: Vec<RuleHit>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingRule {
+    id: String,
+    priority: u16,
+    scope: String,
+    severity: String,
+    condition: String,
+    tags: Vec<String>,
+    suppress: String,
+    source: String,
+}
+
+pub fn sha256_file(path: &Path) -> io::Result<String> {
+    let mut file = File::open(path)?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
     }
-    println!(
-        "rules={count} families={} mode=procedural-v4-ultra low_memory=true",
-        FAMILIES.len()
-    );
-    Ok(())
+    Ok(format!("{:x}", hash.finalize()))
 }
 
-fn score(ctx: &Context, node: &str) -> f64 {
-    ctx.scores
-        .get(node)
-        .copied()
-        .or_else(|| ctx.values.get(node).copied())
-        .unwrap_or(50.0)
-        .clamp(0.0, 100.0)
+pub fn for_each_rule(
+    path: &Path,
+    mut callback: impl FnMut(Rule) -> io::Result<()>,
+) -> io::Result<usize> {
+    let file = BufReader::new(File::open(path)?);
+    let mut pending: Option<PendingRule> = None;
+    let mut count = 0usize;
+    for (line_index, line) in file.lines().enumerate() {
+        let line_number = line_index + 1;
+        let line = line?;
+        if line.starts_with("RULE\t") {
+            if pending.is_some() {
+                return Err(invalid(format!(
+                    "line {line_number}: RULE encountered before prior MSG"
+                )));
+            }
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 9 {
+                return Err(invalid(format!(
+                    "line {line_number}: RULE has {} fields, expected 9",
+                    fields.len()
+                )));
+            }
+            let priority = fields[2].parse::<u16>().map_err(|_| {
+                invalid(format!(
+                    "line {line_number}: invalid priority {}",
+                    fields[2]
+                ))
+            })?;
+            pending = Some(PendingRule {
+                id: fields[1].into(),
+                priority,
+                scope: fields[3].into(),
+                severity: fields[4].into(),
+                condition: fields[5].into(),
+                tags: fields[6]
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|tag| !tag.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                suppress: fields[7].into(),
+                source: fields[8].into(),
+            });
+        } else if line.starts_with("MSG\t") {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            if fields.len() != 3 {
+                return Err(invalid(format!(
+                    "line {line_number}: MSG has {} fields, expected 3",
+                    fields.len()
+                )));
+            }
+            let pending = pending.take().ok_or_else(|| {
+                invalid(format!("line {line_number}: MSG without preceding RULE"))
+            })?;
+            callback(Rule {
+                id: pending.id,
+                priority: pending.priority,
+                scope: pending.scope,
+                severity: pending.severity,
+                condition: pending.condition,
+                tags: pending.tags,
+                suppress: pending.suppress,
+                source: pending.source,
+                title: fields[1].into(),
+                message: fields[2].into(),
+            })?;
+            count += 1;
+        }
+    }
+    if pending.is_some() {
+        return Err(invalid("rulebook ended before final MSG"));
+    }
+    Ok(count)
 }
-fn node(index: usize) -> &'static str {
-    let total = DIMENSIONS.len() + MODULES.len();
-    let i = index % total;
-    if i < DIMENSIONS.len() {
-        DIMENSIONS[i]
-    } else {
-        MODULES[i - DIMENSIONS.len()]
+
+pub fn verify(path: &Path) -> io::Result<Verification> {
+    let sha256 = sha256_file(path)?;
+    if sha256 != CANONICAL_SHA256 {
+        return Err(invalid(format!(
+            "canonical SHA-256 mismatch: expected {CANONICAL_SHA256}, got {sha256}"
+        )));
+    }
+
+    let mut ids = HashSet::with_capacity(EXPECTED_RULES);
+    let mut family_counts: HashMap<&'static str, usize> = HashMap::new();
+    let mut sources = HashMap::new();
+    let mut duplicate_ids = 0usize;
+    let mut invalid_conditions = 0usize;
+    let count = for_each_rule(path, |rule| {
+        if !ids.insert(rule.id.clone()) {
+            duplicate_ids += 1;
+        }
+        let family = family_for_id(&rule.id)
+            .ok_or_else(|| invalid(format!("unknown rule family for {}", rule.id)))?;
+        *family_counts.entry(family).or_default() += 1;
+        *sources.entry(rule.source.clone()).or_default() += 1;
+        if dsl::validate(&rule.condition).is_err() {
+            invalid_conditions += 1;
+        }
+        Ok(())
+    })?;
+
+    if count != EXPECTED_RULES {
+        return Err(invalid(format!(
+            "rule count mismatch: expected {EXPECTED_RULES}, got {count}"
+        )));
+    }
+    if duplicate_ids != 0 {
+        return Err(invalid(format!("duplicate rule IDs: {duplicate_ids}")));
+    }
+    if invalid_conditions != 0 {
+        return Err(invalid(format!(
+            "syntactically invalid conditions: {invalid_conditions}"
+        )));
+    }
+    for (family, expected) in FAMILIES {
+        let actual = family_counts.get(family).copied().unwrap_or_default();
+        if actual != *expected {
+            return Err(invalid(format!(
+                "family {family} mismatch: expected {expected}, got {actual}"
+            )));
+        }
+    }
+    if family_counts.len() != EXPECTED_FAMILIES {
+        return Err(invalid(format!(
+            "family count mismatch: expected {EXPECTED_FAMILIES}, got {}",
+            family_counts.len()
+        )));
+    }
+    Ok(Verification {
+        sha256,
+        rules: count,
+        families: family_counts.len(),
+        duplicate_ids,
+        invalid_conditions,
+        sources,
+    })
+}
+
+pub fn evaluate(path: &Path, context: &Context, max_hits: usize) -> io::Result<Evaluation> {
+    let mut triggered = Vec::new();
+    let mut indeterminate = 0usize;
+    let rules_evaluated = for_each_rule(path, |rule| {
+        match dsl::evaluate(&rule.condition, context) {
+            Truth::True => triggered.push(to_hit(rule)),
+            Truth::Unknown => indeterminate += 1,
+            Truth::False => {}
+        }
+        Ok(())
+    })?;
+    let rules_triggered = triggered.len();
+    let hits = resolve_hits(triggered, max_hits);
+    Ok(Evaluation {
+        rules_evaluated,
+        rules_triggered,
+        rules_indeterminate: indeterminate,
+        hits,
+    })
+}
+
+fn resolve_hits(mut hits: Vec<RuleHit>, max_hits: usize) -> Vec<RuleHit> {
+    let suppression_prefixes = hits
+        .iter()
+        .flat_map(|hit| hit.suppress.split([';', '|']))
+        .filter_map(|value| {
+            let prefix = value.trim().split(':').next()?.trim();
+            (!prefix.is_empty()).then(|| prefix.to_string())
+        })
+        .collect::<HashSet<_>>();
+    hits.retain(|hit| {
+        !suppression_prefixes
+            .iter()
+            .any(|prefix| hit.id.starts_with(&format!("{prefix}-")))
+            || !hit.suppress.is_empty()
+    });
+    hits.sort_by(compare_hits);
+
+    let mut selected = Vec::with_capacity(max_hits.min(hits.len()));
+    let mut seen = HashSet::new();
+    let mut counters_by_scope: HashMap<String, usize> = HashMap::new();
+    for hit in hits {
+        let dedupe_key = (hit.channel, hit.scope.clone(), hit.title.clone());
+        if !seen.insert(dedupe_key) {
+            continue;
+        }
+        if hit.channel == Channel::CounterSignal {
+            let count = counters_by_scope.entry(hit.scope.clone()).or_default();
+            if *count >= 2 {
+                continue;
+            }
+            *count += 1;
+        }
+        selected.push(hit);
+        if selected.len() == max_hits {
+            break;
+        }
+    }
+    selected
+}
+
+fn compare_hits(left: &RuleHit, right: &RuleHit) -> Ordering {
+    channel_rank(left.channel)
+        .cmp(&channel_rank(right.channel))
+        .then_with(|| severity_rank(&right.severity).cmp(&severity_rank(&left.severity)))
+        .then_with(|| left.priority.cmp(&right.priority))
+        .then_with(|| right.specificity.cmp(&left.specificity))
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn channel_rank(channel: Channel) -> u8 {
+    match channel {
+        Channel::DataQuality => 0,
+        Channel::Primary => 1,
+        Channel::Confirmation => 2,
+        Channel::CounterSignal => 3,
     }
 }
-fn high(ctx: &Context, n: &str, t: f64) -> bool {
-    score(ctx, n) >= t
-}
-fn low(ctx: &Context, n: &str, t: f64) -> bool {
-    score(ctx, n) <= 100.0 - t
-}
-fn avg(ctx: &Context, ns: &[&str]) -> f64 {
-    ns.iter().map(|n| score(ctx, n)).sum::<f64>() / ns.len().max(1) as f64
-}
-fn stage(ctx: &Context) -> usize {
-    match score(ctx, "GLOBAL_RISK") {
-        x if x >= 90.0 => 6,
-        x if x >= 80.0 => 5,
-        x if x >= 70.0 => 4,
-        x if x >= 55.0 => 3,
-        x if x >= 40.0 => 2,
-        x if x >= 25.0 => 1,
+
+fn severity_rank(severity: &str) -> u8 {
+    match severity.to_uppercase().as_str() {
+        "CRITICAL" | "EXTREME" => 5,
+        "RED" => 4,
+        "ORANGE" => 3,
+        "YELLOW" => 2,
+        "GREEN" => 1,
         _ => 0,
     }
 }
-fn severity_from(v: f64) -> &'static str {
-    if v >= 85.0 {
-        "EXTREME"
-    } else if v >= 75.0 {
-        "RED"
-    } else if v >= 60.0 {
-        "ORANGE"
-    } else if v >= 40.0 {
-        "YELLOW"
-    } else {
-        "GREEN"
-    }
-}
 
-fn trigger(family: &str, i: usize, ctx: &Context) -> (bool, Vec<&'static str>, f64) {
-    let a = node(i);
-    let b = node(i * 7 + 3);
-    let c = node(i * 13 + 5);
-    let d = node(i * 17 + 11);
-    let e = node(i * 23 + 7);
-    let t = THRESHOLDS[i % THRESHOLDS.len()];
-    let is_path = family.contains("PATH") || family == "V4P3" || family == "V4P4";
-    let is_pair =
-        family == "PAIR" || family == "V4MP" || family == "V4XOM" || family.contains("CORR");
-    let is_tri = family == "TRI" || family == "V4MT" || family.contains('3') || family == "V4MKT3";
-    let is_four = family.contains('4') || family == "V4P4";
-    let is_five = family.contains('5');
-    let is_stage = family.starts_with("V3STAGE-")
-        || family.starts_with("V3SC-")
-        || family.starts_with("V3WGT-");
-
-    if is_stage {
-        let wanted = family
-            .rsplit('-')
-            .next()
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(i % 7);
-        let s = stage(ctx);
-        return (s == wanted, vec!["GLOBAL_RISK"], score(ctx, "GLOBAL_RISK"));
-    }
-    if family == "DATA"
-        || family == "V4SRC"
-        || family == "V4CAD"
-        || family == "V3CONF"
-        || family == "V3UNC"
+fn to_hit(rule: Rule) -> RuleHit {
+    let tags_upper = rule.tags.join(",").to_uppercase();
+    let channel = if rule.scope.eq_ignore_ascii_case("DATA")
+        || tags_upper.contains("DATA_QUALITY")
+        || tags_upper.contains("CADENCE")
     {
-        let conf = score(ctx, "CONFIDENCE");
-        let ok = if i % 2 == 0 { conf < t } else { conf >= t };
-        return (ok, vec!["CONFIDENCE"], conf);
-    }
-    if family == "REC" || family == "V3REC" {
-        let r = score(ctx, "RESILIENCE_SCORE");
-        return (r >= t, vec!["RESILIENCE_SCORE"], r);
-    }
-    if family == "SYS" || family == "V3STR" || family == "V3SV" || family == "V4SVR" {
-        let g = score(ctx, "GLOBAL_RISK");
-        return (g >= t, vec!["GLOBAL_RISK"], g);
-    }
-
-    let nodes = if is_five {
-        vec![a, b, c, d, e]
-    } else if is_four {
-        vec![a, b, c, d]
-    } else if is_tri || is_path {
-        vec![a, b, c]
-    } else if is_pair {
-        vec![a, b]
+        Channel::DataQuality
+    } else if tags_upper.contains("RECOVER")
+        || tags_upper.contains("RELIEF")
+        || tags_upper.contains("COUNTER")
+    {
+        Channel::CounterSignal
+    } else if tags_upper.contains("CONFIRM") {
+        Channel::Confirmation
     } else {
-        vec![a]
+        Channel::Primary
     };
-    let v = avg(ctx, &nodes);
-    let ok = if is_path {
-        nodes
-            .windows(2)
-            .all(|w| score(ctx, w[0]) <= score(ctx, w[1]) + 15.0)
-            && v >= t
-    } else if family == "DIV" || family == "REV" || family.contains("SURP") {
-        high(ctx, a, t) && low(ctx, b, t)
-    } else if i % 4 == 1 {
-        nodes.iter().all(|n| low(ctx, n, t))
-    } else if i % 4 == 2 {
-        nodes.iter().filter(|n| high(ctx, n, t)).count() * 2 >= nodes.len()
-    } else {
-        nodes.iter().all(|n| high(ctx, n, t))
-    };
-    (ok, nodes, v)
+    let specificity = rule.condition.matches(" AND ").count()
+        + rule.condition.matches(" OR ").count()
+        + rule.condition.matches('(').count();
+    RuleHit {
+        id: rule.id,
+        priority: rule.priority,
+        scope: rule.scope,
+        severity: rule.severity,
+        channel,
+        title: rule.title,
+        message: rule.message,
+        condition: rule.condition,
+        tags: rule.tags,
+        source: rule.source,
+        suppress: rule.suppress,
+        specificity,
+    }
 }
 
-pub fn evaluate(ctx: &Context, max_hits: usize) -> (usize, Vec<RuleHit>) {
-    let mut hits = Vec::with_capacity(max_hits.min(64));
-    let mut evaluated = 0usize;
-    for (family, count) in FAMILIES {
-        for i in 0..*count {
-            evaluated += 1;
-            let (ok, nodes, v) = trigger(family, i, ctx);
-            if ok && hits.len() < max_hits {
-                let severity = severity_from(v);
-                let id = format!("{}-{:05}", family, i + 1);
-                let title = format!("{} 규칙 활성", family);
-                let message = format!(
-                    "{} | 관련축={} | 합성점수={:.1}",
-                    family,
-                    nodes.join("→"),
-                    v
-                );
-                hits.push(RuleHit {
-                    id,
-                    priority: if v >= 75.0 { "P1".into() } else { "P2".into() },
-                    scope: "SYSTEM".into(),
-                    severity: severity.into(),
-                    title,
-                    message,
-                });
-            }
-        }
-    }
-    (evaluated, hits)
+fn family_for_id(id: &str) -> Option<&'static str> {
+    FAMILIES
+        .iter()
+        .filter_map(|(family, _)| {
+            (id == *family || id.starts_with(&format!("{family}-"))).then_some(*family)
+        })
+        .max_by_key(|family| family.len())
+}
+
+fn invalid(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn exact_topology() {
-        assert_eq!(count_rules(), 27_494);
-        assert_eq!(FAMILIES.len(), 85);
+    use std::path::PathBuf;
+
+    fn canonical_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("rulebook")
+            .join("Market_Economy_Radar_Rulebook_v4_ULTRA.txt")
     }
+
     #[test]
-    fn evaluation_count() {
-        let c = Context::default();
-        let (n, _) = evaluate(&c, 64);
-        assert_eq!(n, 27_494);
+    fn canonical_rulebook_has_exact_integrity_and_topology() {
+        let verification = verify(&canonical_path()).unwrap();
+        assert_eq!(verification.rules, EXPECTED_RULES);
+        assert_eq!(verification.families, EXPECTED_FAMILIES);
+        assert_eq!(verification.sources.get("v4"), Some(&8_031));
+        assert_eq!(verification.sources.get("v3"), Some(&14_155));
+        assert_eq!(verification.sources.get("v2"), Some(&5_308));
+    }
+
+    #[test]
+    fn exact_fields_and_messages_are_preserved() {
+        let mut first = None;
+        for_each_rule(&canonical_path(), |rule| {
+            if first.is_none() {
+                first = Some(rule);
+            }
+            Ok(())
+        })
+        .unwrap();
+        let first = first.unwrap();
+        assert_eq!(first.id, "SINGLE-0001");
+        assert_eq!(first.scope, "GLOBAL");
+        assert_eq!(
+            first.condition,
+            "band(GROWTH)=GREEN AND dynamic(GROWTH)=IMPROVING_FAST"
+        );
+        assert!(first.message.contains("실물경기"));
+    }
+
+    #[test]
+    fn empty_context_does_not_fabricate_hits() {
+        let result = evaluate(&canonical_path(), &Context::default(), 64).unwrap();
+        assert_eq!(result.rules_evaluated, EXPECTED_RULES);
+        assert_eq!(result.rules_triggered, 0);
+        assert!(result.hits.is_empty());
     }
 }

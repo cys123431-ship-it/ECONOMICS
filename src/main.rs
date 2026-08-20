@@ -6,80 +6,179 @@ mod engine;
 mod rulebook;
 mod scoring;
 mod server;
+
+use collectors::CollectionReport;
 use config::Config;
-use db::Db;
-use std::error::Error;
+use db::{Db, NewObservation};
+use std::{error::Error, io};
 
 fn usage() {
-    println!("EconomicsRadar 0.2.0\ncommands: keys | rulebook | collect-fred [start] | collect-alfred [start] | collect-official | run | serve | demo");
+    println!(
+        "EconomicsRadar 0.3.0\n\
+         commands:\n\
+           keys\n\
+           rulebook\n\
+           collect-fred [start]\n\
+           collect-alfred [start]\n\
+           collect-official\n\
+           collect-all [start]\n\
+           run [as-of]\n\
+           backtest <start> <end> [max-points]\n\
+           serve\n\
+           demo"
+    );
 }
-fn main() -> Result<(), Box<dyn Error>> {
-    let cfg = Config::load();
-    let cmd = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
-    match cmd.as_str() {
-        "keys" => cfg.print_key_status(),
-        "rulebook" => rulebook::verify()?,
-        "collect-fred" => {
-            let db = Db::open(&cfg.db_path)?;
-            let start = std::env::args()
-                .nth(2)
-                .unwrap_or_else(|| "2000-01-01".into());
-            println!(
-                "stored={}",
-                collectors::collect_fred(&cfg, &db, &start, false)?
-            );
+
+fn print_report(report: &CollectionReport) -> Result<(), Box<dyn Error>> {
+    println!("{}", serde_json::to_string_pretty(report)?);
+    if report.is_clean() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "collection completed with {} error(s)",
+            report.errors.len()
+        ))
+        .into())
+    }
+}
+
+fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
+    let mut report = CollectionReport::default();
+    match collectors::collect_treasury(config, db) {
+        Ok(result) => report.merge(result),
+        Err(error) => report.errors.push(format!("treasury: {error}")),
+    }
+    match collectors::collect_binance(config, db) {
+        Ok(result) => report.merge(result),
+        Err(error) => report.errors.push(format!("binance: {error}")),
+    }
+    if config.ecos_api_key.is_some() {
+        match collectors::collect_ecos(config, db) {
+            Ok(result) => report.merge(result),
+            Err(error) => report.errors.push(format!("ecos: {error}")),
         }
-        "collect-alfred" => {
-            let db = Db::open(&cfg.db_path)?;
+    }
+    if config.krx_api_url.is_some() {
+        match collectors::collect_krx(config, db) {
+            Ok(result) => report.merge(result),
+            Err(error) => report.errors.push(format!("krx: {error}")),
+        }
+    }
+    match collectors::collect_configured_adapters(config, db) {
+        Ok(result) => report.merge(result),
+        Err(error) => report
+            .errors
+            .push(format!("configured official adapters: {error}")),
+    }
+    Ok(report)
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let config = Config::load();
+    let command = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
+    match command.as_str() {
+        "keys" => config.print_key_status(),
+        "rulebook" => {
+            let verification = rulebook::verify(&config.rulebook_path)?;
+            println!("{}", serde_json::to_string_pretty(&verification)?);
+        }
+        "collect-fred" | "collect-alfred" => {
+            let db = Db::open(&config.db_path)?;
             let start = std::env::args()
                 .nth(2)
                 .unwrap_or_else(|| "2000-01-01".into());
-            println!(
-                "stored={}",
-                collectors::collect_fred(&cfg, &db, &start, true)?
-            );
+            let report =
+                collectors::collect_fred(&config, &db, &start, command == "collect-alfred")?;
+            print_report(&report)?;
         }
         "collect-official" => {
-            let db = Db::open(&cfg.db_path)?;
-            let mut n = 0;
-            n += collectors::collect_treasury(&db).unwrap_or_else(|e| {
-                eprintln!("treasury: {e}");
-                0
-            });
-            n += collectors::collect_binance(&cfg, &db).unwrap_or_else(|e| {
-                eprintln!("binance: {e}");
-                0
-            });
-            n += collectors::collect_ecos(&cfg, &db).unwrap_or_else(|e| {
-                eprintln!("ecos: {e}");
-                0
-            });
-            n += collectors::collect_krx(&cfg, &db).unwrap_or_else(|e| {
-                eprintln!("krx: {e}");
-                0
-            });
-            println!("stored={n}");
+            let db = Db::open(&config.db_path)?;
+            let report = collect_official(&config, &db)?;
+            print_report(&report)?;
+        }
+        "collect-all" => {
+            let db = Db::open(&config.db_path)?;
+            let start = std::env::args()
+                .nth(2)
+                .unwrap_or_else(|| "2000-01-01".into());
+            let mut report = collectors::collect_fred(&config, &db, &start, false)?;
+            report.merge(collectors::collect_fred(&config, &db, &start, true)?);
+            report.merge(collect_official(&config, &db)?);
+            print_report(&report)?;
         }
         "run" => {
-            let db = Db::open(&cfg.db_path)?;
-            println!("{}", serde_json::to_string_pretty(&engine::run(&db)?)?);
+            rulebook::verify(&config.rulebook_path)?;
+            let db = Db::open(&config.db_path)?;
+            let snapshot = if let Some(as_of) = std::env::args().nth(2) {
+                engine::run_at(&db, &config, &as_of, true)?
+            } else {
+                engine::run(&db, &config)?
+            };
+            println!("{}", serde_json::to_string_pretty(&snapshot)?);
         }
-        "serve" => server::serve(&cfg.host, cfg.db_path.clone())?,
+        "backtest" => {
+            rulebook::verify(&config.rulebook_path)?;
+            let start = std::env::args().nth(2).ok_or("backtest start missing")?;
+            let end = std::env::args().nth(3).ok_or("backtest end missing")?;
+            let max_points = std::env::args()
+                .nth(4)
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(5_000);
+            let db = Db::open(&config.db_path)?;
+            let dates = db.observation_dates(&start, &end)?;
+            if dates.len() > max_points {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "backtest has {} dates, above max-points={max_points}; pass a larger explicit limit",
+                        dates.len()
+                    ),
+                )
+                .into());
+            }
+            let mut snapshots = Vec::with_capacity(dates.len());
+            for date in dates {
+                snapshots.push(engine::run_at(
+                    &db,
+                    &config,
+                    &format!("{date}T23:59:59Z"),
+                    true,
+                )?);
+            }
+            println!("{}", serde_json::to_string_pretty(&snapshots)?);
+        }
+        "serve" => {
+            rulebook::verify(&config.rulebook_path)?;
+            server::serve(&config.host, config.db_path.clone())?;
+        }
         "demo" => {
-            let db = Db::open(&cfg.db_path)?;
-            for i in 0..40 {
-                db.put(
+            rulebook::verify(&config.rulebook_path)?;
+            let db = Db::open(&config.db_path)?;
+            let start = chrono::NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+            for offset in 0..90 {
+                let date = start + chrono::Duration::days(offset);
+                let value = 15.0 + ((offset as f64 / 7.0).sin() * 3.0);
+                db.put(&NewObservation::simple(
                     "fred",
                     "VIXCLS",
-                    &format!("2026-07-{i:02}"),
-                    15.0 + i as f64,
-                    None,
-                )?;
+                    &date.to_string(),
+                    value,
+                ))?;
             }
-            db.put("fred", "VIXCLS", "2026-08-20", 45.0, None)?;
-            println!("{}", serde_json::to_string_pretty(&engine::run(&db)?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&engine::run(&db, &config)?)?
+            );
         }
-        _ => usage(),
+        "help" | "--help" | "-h" => usage(),
+        _ => {
+            usage();
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown command: {command}"),
+            )
+            .into());
+        }
     }
     Ok(())
 }

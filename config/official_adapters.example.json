@@ -1,0 +1,21 @@
+{
+  "adapters": [
+    {
+      "enabled": false,
+      "source": "ofr_fsi",
+      "url": "https://official.example/api/replace-with-documented-endpoint",
+      "records_pointer": "/data",
+      "date_field": "date",
+      "released_field": "release_date",
+      "source_asof_field": "vintage_date",
+      "entity_field": "entity",
+      "series": [
+        {
+          "name": "OFR_FSI",
+          "value_field": "fsi",
+          "absolute": false
+        }
+      ]
+    }
+  ]
+}
