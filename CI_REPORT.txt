@@ -1,368 +1,1077 @@
 == cargo fmt --check ==
-error: empty character literal
-  --> /home/runner/work/ECONOMICS/ECONOMICS/src/collectors.rs:45:92
-   |
-45 | ...   if let Some(x)=row.get(key).and_then(Value::as_str).and_then(|s|s.replace(',','').parse::<f64>().ok()){db.put("treasury",name,...
-   |                                                                                      ^ empty character literal
-
-Error writing files: failed to resolve mod `collectors`: cannot parse /home/runner/work/ECONOMICS/ECONOMICS/src/collectors.rs
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/collectors.rs:168:
+             item
+         );
+         let value: Value = http.get(&url).send()?.error_for_status()?.json()?;
+-        if let Some(rows) = value.pointer("/StatisticSearch/row").and_then(Value::as_array) {
++        if let Some(rows) = value
++            .pointer("/StatisticSearch/row")
++            .and_then(Value::as_array)
++        {
+             for row in rows {
+                 if let (Some(date), Some(number)) = (
+                     row.get("TIME").and_then(Value::as_str),
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/config.rs:16:
+     if let Ok(text) = fs::read_to_string(".env") {
+         for raw in text.lines() {
+             let line = raw.trim();
+-            if line.is_empty() || line.starts_with('#') { continue; }
++            if line.is_empty() || line.starts_with('#') {
++                continue;
++            }
+             if let Some((k, v)) = line.split_once('=') {
+                 map.insert(k.trim().to_string(), v.trim().trim_matches('"').to_string());
+             }
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/config.rs:26:
+ }
+ 
+ fn value(name: &str, file: &HashMap<String, String>) -> Option<String> {
+-    env::var(name).ok().or_else(|| file.get(name).cloned()).filter(|s| !s.is_empty())
++    env::var(name)
++        .ok()
++        .or_else(|| file.get(name).cloned())
++        .filter(|s| !s.is_empty())
+ }
+ 
+ impl Config {
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/config.rs:38:
+             krx_api_key: value("KRX_API_KEY", &file),
+             binance_api_key: value("BINANCE_API_KEY", &file),
+             krx_api_url: value("KRX_API_URL", &file),
+-            db_path: PathBuf::from(value("ECONOMICS_DB", &file).unwrap_or_else(|| "runtime/economics.db".into())),
++            db_path: PathBuf::from(
++                value("ECONOMICS_DB", &file).unwrap_or_else(|| "runtime/economics.db".into()),
++            ),
+             host: value("ECONOMICS_HOST", &file).unwrap_or_else(|| "127.0.0.1:8765".into()),
+         }
+     }
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/config.rs:49:
+             ("ECOS_API_KEY", self.ecos_api_key.is_some()),
+             ("KRX_API_KEY", self.krx_api_key.is_some()),
+             ("BINANCE_API_KEY", self.binance_api_key.is_some()),
+-        ] { println!("{name}: {}", if present { "configured" } else { "missing" }); }
+-        println!("KRX_API_URL: {}", if self.krx_api_url.is_some() { "configured" } else { "missing" });
++        ] {
++            println!("{name}: {}", if present { "configured" } else { "missing" });
++        }
++        println!(
++            "KRX_API_URL: {}",
++            if self.krx_api_url.is_some() {
++                "configured"
++            } else {
++                "missing"
++            }
++        );
+     }
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:1:
+ use rusqlite::{params, Connection, OptionalExtension, Result};
+ use std::{fs, path::Path};
+ 
+-pub struct Db { conn: Connection }
++pub struct Db {
++    conn: Connection,
++}
+ 
+ impl Db {
+     pub fn open(path: &Path) -> Result<Self> {
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:8:
+-        if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?; }
++        if let Some(parent) = path.parent() {
++            fs::create_dir_all(parent)
++                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
++        }
+         let conn = Connection::open(path)?;
+         conn.execute_batch(r#"
+             PRAGMA journal_mode=WAL;
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:39:
+         Ok(Self { conn })
+     }
+ 
+-    pub fn put(&self, source:&str, series:&str, observed_at:&str, value:f64, vintage:Option<&str>) -> Result<()> {
++    pub fn put(
++        &self,
++        source: &str,
++        series: &str,
++        observed_at: &str,
++        value: f64,
++        vintage: Option<&str>,
++    ) -> Result<()> {
+         let now = chrono::Utc::now().to_rfc3339();
+         self.conn.execute(
+             "INSERT OR REPLACE INTO observations(source,series,observed_at,value,vintage,ingested_at) VALUES(?1,?2,?3,?4,?5,?6)",
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:47:
+         Ok(())
+     }
+ 
+-    pub fn latest(&self, source:&str, series:&str) -> Result<Option<f64>> {
++    pub fn latest(&self, source: &str, series: &str) -> Result<Option<f64>> {
+         self.conn.query_row(
+             "SELECT value FROM observations WHERE source=?1 AND series=?2 ORDER BY observed_at DESC LIMIT 1",
+             params![source,series], |r| r.get(0)).optional()
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:54:
+     }
+ 
+-    pub fn recent(&self, source:&str, series:&str, limit:usize) -> Result<Vec<f64>> {
++    pub fn recent(&self, source: &str, series: &str, limit: usize) -> Result<Vec<f64>> {
+         let mut st = self.conn.prepare("SELECT value FROM observations WHERE source=?1 AND series=?2 ORDER BY observed_at DESC LIMIT ?3")?;
+-        let rows=st.query_map(params![source,series,limit as i64], |r| r.get::<_,f64>(0))?;
+-        let mut v=Vec::with_capacity(limit.min(256));
+-        for x in rows { v.push(x?); }
+-        v.reverse(); Ok(v)
++        let rows = st.query_map(params![source, series, limit as i64], |r| {
++            r.get::<_, f64>(0)
++        })?;
++        let mut v = Vec::with_capacity(limit.min(256));
++        for x in rows {
++            v.push(x?);
++        }
++        v.reverse();
++        Ok(v)
+     }
+ 
+-    pub fn save_snapshot(&self, s:&crate::engine::Snapshot) -> Result<()> {
+-        let payload=serde_json::to_string(s).unwrap_or_else(|_| "{}".into());
++    pub fn save_snapshot(&self, s: &crate::engine::Snapshot) -> Result<()> {
++        let payload = serde_json::to_string(s).unwrap_or_else(|_| "{}".into());
+         self.conn.execute("INSERT OR REPLACE INTO snapshots(ts,global_risk,stress,vulnerability,resilience,confidence,diffusion,stage,payload) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+             params![s.ts,s.global_risk,s.stress,s.vulnerability,s.resilience,s.confidence,s.diffusion,s.stage,payload])?;
+         Ok(())
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/db.rs:69:
+     }
+ 
+     pub fn latest_snapshot_json(&self) -> Result<Option<String>> {
+-        self.conn.query_row("SELECT payload FROM snapshots ORDER BY ts DESC LIMIT 1", [], |r| r.get(0)).optional()
++        self.conn
++            .query_row(
++                "SELECT payload FROM snapshots ORDER BY ts DESC LIMIT 1",
++                [],
++                |r| r.get(0),
++            )
++            .optional()
+     }
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/dsl.rs:1:
+ use std::collections::HashMap;
+ 
+ #[derive(Default)]
+-pub struct Context { pub values:HashMap<String,f64>, pub scores:HashMap<String,f64> }
+-impl Context { pub fn value(&self,k:&str)->Option<f64>{self.values.get(k).copied().or_else(||self.scores.get(k).copied())} }
++pub struct Context {
++    pub values: HashMap<String, f64>,
++    pub scores: HashMap<String, f64>,
++}
++impl Context {
++    pub fn value(&self, k: &str) -> Option<f64> {
++        self.values
++            .get(k)
++            .copied()
++            .or_else(|| self.scores.get(k).copied())
++    }
++}
+ 
+-fn cmp(lhs:f64,op:&str,rhs:f64)->bool{match op{">"=>lhs>rhs,">="=>lhs>=rhs,"<"=>lhs<rhs,"<="=>lhs<=rhs,"=="=> (lhs-rhs).abs()<f64::EPSILON,"!="=>(lhs-rhs).abs()>=f64::EPSILON,_=>false}}
++fn cmp(lhs: f64, op: &str, rhs: f64) -> bool {
++    match op {
++        ">" => lhs > rhs,
++        ">=" => lhs >= rhs,
++        "<" => lhs < rhs,
++        "<=" => lhs <= rhs,
++        "==" => (lhs - rhs).abs() < f64::EPSILON,
++        "!=" => (lhs - rhs).abs() >= f64::EPSILON,
++        _ => false,
++    }
++}
+ 
+-pub fn eval(expr:&str,ctx:&Context)->bool {
+-    let e=expr.trim(); if e.is_empty(){return false;}
+-    if let Some((a,b))=split_top(e," OR "){return eval(a,ctx)||eval(b,ctx);}
+-    if let Some((a,b))=split_top(e," AND "){return eval(a,ctx)&&eval(b,ctx);}
+-    if e.starts_with('(')&&e.ends_with(')'){return eval(&e[1..e.len()-1],ctx);}
+-    for op in [">=","<=","!=","==",">","<"] { if let Some((l,r))=e.split_once(op) { if let(Some(a),Ok(b))=(resolve(l.trim(),ctx),r.trim().parse::<f64>()){return cmp(a,op,b);} } }
++pub fn eval(expr: &str, ctx: &Context) -> bool {
++    let e = expr.trim();
++    if e.is_empty() {
++        return false;
++    }
++    if let Some((a, b)) = split_top(e, " OR ") {
++        return eval(a, ctx) || eval(b, ctx);
++    }
++    if let Some((a, b)) = split_top(e, " AND ") {
++        return eval(a, ctx) && eval(b, ctx);
++    }
++    if e.starts_with('(') && e.ends_with(')') {
++        return eval(&e[1..e.len() - 1], ctx);
++    }
++    for op in [">=", "<=", "!=", "==", ">", "<"] {
++        if let Some((l, r)) = e.split_once(op) {
++            if let (Some(a), Ok(b)) = (resolve(l.trim(), ctx), r.trim().parse::<f64>()) {
++                return cmp(a, op, b);
++            }
++        }
++    }
+     false
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/dsl.rs:18:
+-fn resolve(s:&str,ctx:&Context)->Option<f64>{
+-    if let Ok(x)=s.parse(){return Some(x);}
+-    for p in ["score(","module(","risk(","metric("] { if s.starts_with(p)&&s.ends_with(')'){return ctx.value(s[p.len()..s.len()-1].trim_matches('"'));} }
++fn resolve(s: &str, ctx: &Context) -> Option<f64> {
++    if let Ok(x) = s.parse() {
++        return Some(x);
++    }
++    for p in ["score(", "module(", "risk(", "metric("] {
++        if s.starts_with(p) && s.ends_with(')') {
++            return ctx.value(s[p.len()..s.len() - 1].trim_matches('"'));
++        }
++    }
+     ctx.value(s)
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/dsl.rs:24:
+-fn split_top<'a>(s:&'a str,needle:&str)->Option<(&'a str,&'a str)>{
+-    let mut depth=0i32; let b=s.as_bytes(); let n=needle.as_bytes(); let mut i=0;
+-    while i+n.len()<=b.len(){match b[i]{b'('=>depth+=1,b')'=>depth-=1,_=>{}}if depth==0&&&b[i..i+n.len()]==n{return Some((&s[..i],&s[i+n.len()..]));}i+=1;}None
++fn split_top<'a>(s: &'a str, needle: &str) -> Option<(&'a str, &'a str)> {
++    let mut depth = 0i32;
++    let b = s.as_bytes();
++    let n = needle.as_bytes();
++    let mut i = 0;
++    while i + n.len() <= b.len() {
++        match b[i] {
++            b'(' => depth += 1,
++            b')' => depth -= 1,
++            _ => {}
++        }
++        if depth == 0 && &b[i..i + n.len()] == n {
++            return Some((&s[..i], &s[i + n.len()..]));
++        }
++        i += 1;
++    }
++    None
+ }
+ 
+-#[cfg(test)] mod tests{use super::*;#[test]fn simple(){let mut c=Context::default();c.values.insert("X".into(),80.0);assert!(eval("X >= 75",&c));assert!(eval("X >= 75 AND X < 90",&c));}}
++#[cfg(test)]
++mod tests {
++    use super::*;
++    #[test]
++    fn simple() {
++        let mut c = Context::default();
++        c.values.insert("X".into(), 80.0);
++        assert!(eval("X >= 75", &c));
++        assert!(eval("X >= 75 AND X < 90", &c));
++    }
++}
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/engine.rs:27:
+     ("fred", "NFCILEVERAGE", "LEVERAGE", false, "vulnerability"),
+     ("fred", "ICSA", "LABOR", false, "vulnerability"),
+     ("fred", "WEI", "GROWTH", true, "vulnerability"),
+-    ("binance", "BTC_FUNDING", "CRYPTO_DERIVATIVES", false, "stress"),
+-    ("binance", "BTC_OI", "CRYPTO_DERIVATIVES", false, "vulnerability"),
+-    ("treasury", "AUCTION_BTC", "TREASURY_AUCTION", true, "stress"),
++    (
++        "binance",
++        "BTC_FUNDING",
++        "CRYPTO_DERIVATIVES",
++        false,
++        "stress",
++    ),
++    (
++        "binance",
++        "BTC_OI",
++        "CRYPTO_DERIVATIVES",
++        false,
++        "vulnerability",
++    ),
++    (
++        "treasury",
++        "AUCTION_BTC",
++        "TREASURY_AUCTION",
++        true,
++        "stress",
++    ),
+     ("ecos", "KR_USD_KRW", "KOREA_FIN_STAB", false, "stress"),
+ ];
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/engine.rs:72:
+     let confidence = (confidence_parts as f64 / METRICS.len() as f64 * 100.0).clamp(0.0, 100.0);
+ 
+     ctx.scores.insert("STRESS_SCORE".into(), stress_score);
+-    ctx.scores.insert("VULNERABILITY_SCORE".into(), vulnerability_score);
++    ctx.scores
++        .insert("VULNERABILITY_SCORE".into(), vulnerability_score);
+     ctx.scores.insert("RESILIENCE_SCORE".into(), resilience);
+     ctx.scores.insert("GLOBAL_RISK".into(), global_risk);
+     ctx.scores.insert("CONFIDENCE".into(), confidence);
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/main.rs:1:
+-mod collectors;mod config;mod db;mod dsl;mod engine;mod rulebook;mod scoring;mod server;
+-use config::Config;use db::Db;use std::error::Error;
++mod collectors;
++mod config;
++mod db;
++mod dsl;
++mod engine;
++mod rulebook;
++mod scoring;
++mod server;
++use config::Config;
++use db::Db;
++use std::error::Error;
+ 
+-fn usage(){println!("EconomicsRadar 0.2.0\ncommands: keys | rulebook | collect-fred [start] | collect-alfred [start] | collect-official | run | serve | demo");}
+-fn main()->Result<(),Box<dyn Error>>{let cfg=Config::load();let cmd=std::env::args().nth(1).unwrap_or_else(||"serve".into());match cmd.as_str(){
+-"keys"=>cfg.print_key_status(),
+-"rulebook"=>rulebook::verify()?,
+-"collect-fred"=>{let db=Db::open(&cfg.db_path)?;let start=std::env::args().nth(2).unwrap_or_else(||"2000-01-01".into());println!("stored={}",collectors::collect_fred(&cfg,&db,&start,false)?);},
+-"collect-alfred"=>{let db=Db::open(&cfg.db_path)?;let start=std::env::args().nth(2).unwrap_or_else(||"2000-01-01".into());println!("stored={}",collectors::collect_fred(&cfg,&db,&start,true)?);},
+-"collect-official"=>{let db=Db::open(&cfg.db_path)?;let mut n=0;n+=collectors::collect_treasury(&db).unwrap_or_else(|e|{eprintln!("treasury: {e}");0});n+=collectors::collect_binance(&cfg,&db).unwrap_or_else(|e|{eprintln!("binance: {e}");0});n+=collectors::collect_ecos(&cfg,&db).unwrap_or_else(|e|{eprintln!("ecos: {e}");0});n+=collectors::collect_krx(&cfg,&db).unwrap_or_else(|e|{eprintln!("krx: {e}");0});println!("stored={n}");},
+-"run"=>{let db=Db::open(&cfg.db_path)?;println!("{}",serde_json::to_string_pretty(&engine::run(&db)?)?);},
+-"serve"=>server::serve(&cfg.host,cfg.db_path.clone())?,
+-"demo"=>{let db=Db::open(&cfg.db_path)?;for i in 0..40{db.put("fred","VIXCLS",&format!("2026-07-{i:02}"),15.0+i as f64,None)?;}db.put("fred","VIXCLS","2026-08-20",45.0,None)?;println!("{}",serde_json::to_string_pretty(&engine::run(&db)?)?);},
+-_=>usage()}Ok(())}
++fn usage() {
++    println!("EconomicsRadar 0.2.0\ncommands: keys | rulebook | collect-fred [start] | collect-alfred [start] | collect-official | run | serve | demo");
++}
++fn main() -> Result<(), Box<dyn Error>> {
++    let cfg = Config::load();
++    let cmd = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
++    match cmd.as_str() {
++        "keys" => cfg.print_key_status(),
++        "rulebook" => rulebook::verify()?,
++        "collect-fred" => {
++            let db = Db::open(&cfg.db_path)?;
++            let start = std::env::args()
++                .nth(2)
++                .unwrap_or_else(|| "2000-01-01".into());
++            println!(
++                "stored={}",
++                collectors::collect_fred(&cfg, &db, &start, false)?
++            );
++        }
++        "collect-alfred" => {
++            let db = Db::open(&cfg.db_path)?;
++            let start = std::env::args()
++                .nth(2)
++                .unwrap_or_else(|| "2000-01-01".into());
++            println!(
++                "stored={}",
++                collectors::collect_fred(&cfg, &db, &start, true)?
++            );
++        }
++        "collect-official" => {
++            let db = Db::open(&cfg.db_path)?;
++            let mut n = 0;
++            n += collectors::collect_treasury(&db).unwrap_or_else(|e| {
++                eprintln!("treasury: {e}");
++                0
++            });
++            n += collectors::collect_binance(&cfg, &db).unwrap_or_else(|e| {
++                eprintln!("binance: {e}");
++                0
++            });
++            n += collectors::collect_ecos(&cfg, &db).unwrap_or_else(|e| {
++                eprintln!("ecos: {e}");
++                0
++            });
++            n += collectors::collect_krx(&cfg, &db).unwrap_or_else(|e| {
++                eprintln!("krx: {e}");
++                0
++            });
++            println!("stored={n}");
++        }
++        "run" => {
++            let db = Db::open(&cfg.db_path)?;
++            println!("{}", serde_json::to_string_pretty(&engine::run(&db)?)?);
++        }
++        "serve" => server::serve(&cfg.host, cfg.db_path.clone())?,
++        "demo" => {
++            let db = Db::open(&cfg.db_path)?;
++            for i in 0..40 {
++                db.put(
++                    "fred",
++                    "VIXCLS",
++                    &format!("2026-07-{i:02}"),
++                    15.0 + i as f64,
++                    None,
++                )?;
++            }
++            db.put("fred", "VIXCLS", "2026-08-20", 45.0, None)?;
++            println!("{}", serde_json::to_string_pretty(&engine::run(&db)?)?);
++        }
++        _ => usage(),
++    }
++    Ok(())
++}
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:18:
+ // Runtime conditions are generated deterministically from the same dimension/module graph,
+ // avoiding a 10+ MiB resident text rulebook and eliminating parser allocation overhead.
+ pub const FAMILIES: &[(&str, usize)] = &[
+-    ("CR-P",72),("CR-S",10),("CR4",10),("DATA",20),("DIV",30),("KR-P",90),("KR-S",10),("KR4",10),
+-    ("PAIR",1683),("REC",20),("REG",30),("REV",20),("SEQ",385),("SINGLE",360),("SYS",30),("TRI",2448),
+-    ("US-P",90),("US-S",10),("V3ATTR",144),("V3CONF",252),("V3CORR",918),("V3CR3",252),("V3CR4",252),
+-    ("V3CR5",252),("V3DIFF",57),("V3EH",770),("V3H",1152),("V3HD",216),("V3HIST",60),("V3HP",1224),
+-    ("V3KR3",360),("V3KR4",420),("V3KR5",504),("V3MB-CR",20),("V3MB-KO",20),("V3MB-US",20),
+-    ("V3PATH3",1192),("V3PATH4",2400),("V3PATH5",900),("V3POL",10),("V3PRE",180),("V3REC",252),
+-    ("V3SC-0",8),("V3SC-1",8),("V3SC-2",8),("V3SC-3",8),("V3SC-4",8),("V3SC-5",8),("V3SC-6",8),
+-    ("V3STAGE-0",1),("V3STAGE-1",1),("V3STAGE-2",1),("V3STAGE-3",1),("V3STAGE-4",1),("V3STAGE-5",1),("V3STAGE-6",1),
+-    ("V3STR",378),("V3STX",12),("V3SURP",80),("V3SV",365),("V3UNC",8),("V3US3",360),("V3US4",420),
+-    ("V3US5",504),("V3WGT-0",18),("V3WGT-1",18),("V3WGT-2",18),("V3WGT-3",18),("V3WGT-4",18),
+-    ("V3WGT-5",18),("V3WGT-6",18),("V3X",12),("V4ARC",15),("V4CAD",68),("V4MET",250),("V4MKT3",288),
+-    ("V4MOD",340),("V4MP",1088),("V4MSV",75),("V4MT",2040),("V4P3",387),("V4P4",1800),("V4SRC",30),
+-    ("V4SVR",100),("V4XOM",1530),
++    ("CR-P", 72),
++    ("CR-S", 10),
++    ("CR4", 10),
++    ("DATA", 20),
++    ("DIV", 30),
++    ("KR-P", 90),
++    ("KR-S", 10),
++    ("KR4", 10),
++    ("PAIR", 1683),
++    ("REC", 20),
++    ("REG", 30),
++    ("REV", 20),
++    ("SEQ", 385),
++    ("SINGLE", 360),
++    ("SYS", 30),
++    ("TRI", 2448),
++    ("US-P", 90),
++    ("US-S", 10),
++    ("V3ATTR", 144),
++    ("V3CONF", 252),
++    ("V3CORR", 918),
++    ("V3CR3", 252),
++    ("V3CR4", 252),
++    ("V3CR5", 252),
++    ("V3DIFF", 57),
++    ("V3EH", 770),
++    ("V3H", 1152),
++    ("V3HD", 216),
++    ("V3HIST", 60),
++    ("V3HP", 1224),
++    ("V3KR3", 360),
++    ("V3KR4", 420),
++    ("V3KR5", 504),
++    ("V3MB-CR", 20),
++    ("V3MB-KO", 20),
++    ("V3MB-US", 20),
++    ("V3PATH3", 1192),
++    ("V3PATH4", 2400),
++    ("V3PATH5", 900),
++    ("V3POL", 10),
++    ("V3PRE", 180),
++    ("V3REC", 252),
++    ("V3SC-0", 8),
++    ("V3SC-1", 8),
++    ("V3SC-2", 8),
++    ("V3SC-3", 8),
++    ("V3SC-4", 8),
++    ("V3SC-5", 8),
++    ("V3SC-6", 8),
++    ("V3STAGE-0", 1),
++    ("V3STAGE-1", 1),
++    ("V3STAGE-2", 1),
++    ("V3STAGE-3", 1),
++    ("V3STAGE-4", 1),
++    ("V3STAGE-5", 1),
++    ("V3STAGE-6", 1),
++    ("V3STR", 378),
++    ("V3STX", 12),
++    ("V3SURP", 80),
++    ("V3SV", 365),
++    ("V3UNC", 8),
++    ("V3US3", 360),
++    ("V3US4", 420),
++    ("V3US5", 504),
++    ("V3WGT-0", 18),
++    ("V3WGT-1", 18),
++    ("V3WGT-2", 18),
++    ("V3WGT-3", 18),
++    ("V3WGT-4", 18),
++    ("V3WGT-5", 18),
++    ("V3WGT-6", 18),
++    ("V3X", 12),
++    ("V4ARC", 15),
++    ("V4CAD", 68),
++    ("V4MET", 250),
++    ("V4MKT3", 288),
++    ("V4MOD", 340),
++    ("V4MP", 1088),
++    ("V4MSV", 75),
++    ("V4MT", 2040),
++    ("V4P3", 387),
++    ("V4P4", 1800),
++    ("V4SRC", 30),
++    ("V4SVR", 100),
++    ("V4XOM", 1530),
+ ];
+ 
+ pub const DIMENSIONS: &[&str] = &[
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:37:
+-    "GROWTH","LABOR","INFLATION","RATES","TREASURY","CREDIT","BANKING","LIQUIDITY","FINCOND",
+-    "LEVERAGE","VOLATILITY","USD","HOUSING","CONSUMER","CORP_HEALTH","FUNDING","KOREA_MACRO","CHINA_SPILLOVER",
++    "GROWTH",
++    "LABOR",
++    "INFLATION",
++    "RATES",
++    "TREASURY",
++    "CREDIT",
++    "BANKING",
++    "LIQUIDITY",
++    "FINCOND",
++    "LEVERAGE",
++    "VOLATILITY",
++    "USD",
++    "HOUSING",
++    "CONSUMER",
++    "CORP_HEALTH",
++    "FUNDING",
++    "KOREA_MACRO",
++    "CHINA_SPILLOVER",
+ ];
+ pub const MODULES: &[&str] = &[
+-    "VALUATION","BUSINESS_DEBT","US_HOUSEHOLD_DEBT","HEDGE_FUND_LEVERAGE","HEDGE_FUND_FUNDING","HF_COUNTERPARTY",
+-    "DEALER_INTERMEDIATION","REPO_MICRO","MMF_FUNDING","MARGIN_COLLATERAL","TREASURY_AUCTION","TREASURY_BUYBACK_FLOW",
+-    "FOREIGN_TREASURY_DEMAND","GLOBAL_DOLLAR_CREDIT","KOREA_FIN_STAB","KOREA_MARKET_INTERNALS","CRYPTO_DERIVATIVES",
++    "VALUATION",
++    "BUSINESS_DEBT",
++    "US_HOUSEHOLD_DEBT",
++    "HEDGE_FUND_LEVERAGE",
++    "HEDGE_FUND_FUNDING",
++    "HF_COUNTERPARTY",
++    "DEALER_INTERMEDIATION",
++    "REPO_MICRO",
++    "MMF_FUNDING",
++    "MARGIN_COLLATERAL",
++    "TREASURY_AUCTION",
++    "TREASURY_BUYBACK_FLOW",
++    "FOREIGN_TREASURY_DEMAND",
++    "GLOBAL_DOLLAR_CREDIT",
++    "KOREA_FIN_STAB",
++    "KOREA_MARKET_INTERNALS",
++    "CRYPTO_DERIVATIVES",
+ ];
+-const THRESHOLDS: &[f64] = &[25.0,35.0,45.0,50.0,60.0,65.0,75.0,85.0];
++const THRESHOLDS: &[f64] = &[25.0, 35.0, 45.0, 50.0, 60.0, 65.0, 75.0, 85.0];
+ 
+-pub fn count_rules() -> usize { FAMILIES.iter().map(|(_, n)| *n).sum() }
++pub fn count_rules() -> usize {
++    FAMILIES.iter().map(|(_, n)| *n).sum()
++}
+ 
+ pub fn verify() -> io::Result<()> {
+     let count = count_rules();
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:51:
+     if count != EXPECTED_RULES || FAMILIES.len() != EXPECTED_FAMILIES {
+-        return Err(io::Error::new(io::ErrorKind::InvalidData,
+-            format!("rule topology mismatch: rules={count} families={}", FAMILIES.len())));
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            format!(
++                "rule topology mismatch: rules={count} families={}",
++                FAMILIES.len()
++            ),
++        ));
+     }
+-    println!("rules={count} families={} mode=procedural-v4-ultra low_memory=true", FAMILIES.len());
++    println!(
++        "rules={count} families={} mode=procedural-v4-ultra low_memory=true",
++        FAMILIES.len()
++    );
+     Ok(())
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:59:
+ fn score(ctx: &Context, node: &str) -> f64 {
+-    ctx.scores.get(node).copied().or_else(|| ctx.values.get(node).copied()).unwrap_or(50.0).clamp(0.0, 100.0)
++    ctx.scores
++        .get(node)
++        .copied()
++        .or_else(|| ctx.values.get(node).copied())
++        .unwrap_or(50.0)
++        .clamp(0.0, 100.0)
+ }
+ fn node(index: usize) -> &'static str {
+     let total = DIMENSIONS.len() + MODULES.len();
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:64:
+     let i = index % total;
+-    if i < DIMENSIONS.len() { DIMENSIONS[i] } else { MODULES[i - DIMENSIONS.len()] }
++    if i < DIMENSIONS.len() {
++        DIMENSIONS[i]
++    } else {
++        MODULES[i - DIMENSIONS.len()]
++    }
+ }
+-fn high(ctx:&Context,n:&str,t:f64)->bool { score(ctx,n) >= t }
+-fn low(ctx:&Context,n:&str,t:f64)->bool { score(ctx,n) <= 100.0 - t }
+-fn avg(ctx:&Context, ns:&[&str])->f64 { ns.iter().map(|n| score(ctx,n)).sum::<f64>() / ns.len().max(1) as f64 }
+-fn stage(ctx:&Context)->usize {
+-    match score(ctx,"GLOBAL_RISK") { x if x>=90.0=>6, x if x>=80.0=>5, x if x>=70.0=>4, x if x>=55.0=>3, x if x>=40.0=>2, x if x>=25.0=>1, _=>0 }
++fn high(ctx: &Context, n: &str, t: f64) -> bool {
++    score(ctx, n) >= t
+ }
+-fn severity_from(v:f64)->&'static str { if v>=85.0{"EXTREME"}else if v>=75.0{"RED"}else if v>=60.0{"ORANGE"}else if v>=40.0{"YELLOW"}else{"GREEN"} }
++fn low(ctx: &Context, n: &str, t: f64) -> bool {
++    score(ctx, n) <= 100.0 - t
++}
++fn avg(ctx: &Context, ns: &[&str]) -> f64 {
++    ns.iter().map(|n| score(ctx, n)).sum::<f64>() / ns.len().max(1) as f64
++}
++fn stage(ctx: &Context) -> usize {
++    match score(ctx, "GLOBAL_RISK") {
++        x if x >= 90.0 => 6,
++        x if x >= 80.0 => 5,
++        x if x >= 70.0 => 4,
++        x if x >= 55.0 => 3,
++        x if x >= 40.0 => 2,
++        x if x >= 25.0 => 1,
++        _ => 0,
++    }
++}
++fn severity_from(v: f64) -> &'static str {
++    if v >= 85.0 {
++        "EXTREME"
++    } else if v >= 75.0 {
++        "RED"
++    } else if v >= 60.0 {
++        "ORANGE"
++    } else if v >= 40.0 {
++        "YELLOW"
++    } else {
++        "GREEN"
++    }
++}
+ 
+-fn trigger(family:&str, i:usize, ctx:&Context)->(bool,Vec<&'static str>,f64) {
+-    let a=node(i); let b=node(i*7+3); let c=node(i*13+5); let d=node(i*17+11); let e=node(i*23+7);
+-    let t=THRESHOLDS[i%THRESHOLDS.len()];
+-    let is_path=family.contains("PATH")||family=="V4P3"||family=="V4P4";
+-    let is_pair=family=="PAIR"||family=="V4MP"||family=="V4XOM"||family.contains("CORR");
+-    let is_tri=family=="TRI"||family=="V4MT"||family.contains('3')||family=="V4MKT3";
+-    let is_four=family.contains('4')||family=="V4P4";
+-    let is_five=family.contains('5');
+-    let is_stage=family.starts_with("V3STAGE-")||family.starts_with("V3SC-")||family.starts_with("V3WGT-");
++fn trigger(family: &str, i: usize, ctx: &Context) -> (bool, Vec<&'static str>, f64) {
++    let a = node(i);
++    let b = node(i * 7 + 3);
++    let c = node(i * 13 + 5);
++    let d = node(i * 17 + 11);
++    let e = node(i * 23 + 7);
++    let t = THRESHOLDS[i % THRESHOLDS.len()];
++    let is_path = family.contains("PATH") || family == "V4P3" || family == "V4P4";
++    let is_pair =
++        family == "PAIR" || family == "V4MP" || family == "V4XOM" || family.contains("CORR");
++    let is_tri = family == "TRI" || family == "V4MT" || family.contains('3') || family == "V4MKT3";
++    let is_four = family.contains('4') || family == "V4P4";
++    let is_five = family.contains('5');
++    let is_stage = family.starts_with("V3STAGE-")
++        || family.starts_with("V3SC-")
++        || family.starts_with("V3WGT-");
+ 
+     if is_stage {
+-        let wanted=family.rsplit('-').next().and_then(|s|s.parse::<usize>().ok()).unwrap_or(i%7);
+-        let s=stage(ctx); return (s==wanted, vec!["GLOBAL_RISK"], score(ctx,"GLOBAL_RISK"));
++        let wanted = family
++            .rsplit('-')
++            .next()
++            .and_then(|s| s.parse::<usize>().ok())
++            .unwrap_or(i % 7);
++        let s = stage(ctx);
++        return (s == wanted, vec!["GLOBAL_RISK"], score(ctx, "GLOBAL_RISK"));
+     }
+-    if family=="DATA"||family=="V4SRC"||family=="V4CAD"||family=="V3CONF"||family=="V3UNC" {
+-        let conf=score(ctx,"CONFIDENCE");
+-        let ok=if i%2==0 { conf < t } else { conf >= t };
+-        return (ok,vec!["CONFIDENCE"],conf);
++    if family == "DATA"
++        || family == "V4SRC"
++        || family == "V4CAD"
++        || family == "V3CONF"
++        || family == "V3UNC"
++    {
++        let conf = score(ctx, "CONFIDENCE");
++        let ok = if i % 2 == 0 { conf < t } else { conf >= t };
++        return (ok, vec!["CONFIDENCE"], conf);
+     }
+-    if family=="REC"||family=="V3REC" { let r=score(ctx,"RESILIENCE_SCORE"); return (r>=t,vec!["RESILIENCE_SCORE"],r); }
+-    if family=="SYS"||family=="V3STR"||family=="V3SV"||family=="V4SVR" { let g=score(ctx,"GLOBAL_RISK"); return (g>=t,vec!["GLOBAL_RISK"],g); }
++    if family == "REC" || family == "V3REC" {
++        let r = score(ctx, "RESILIENCE_SCORE");
++        return (r >= t, vec!["RESILIENCE_SCORE"], r);
++    }
++    if family == "SYS" || family == "V3STR" || family == "V3SV" || family == "V4SVR" {
++        let g = score(ctx, "GLOBAL_RISK");
++        return (g >= t, vec!["GLOBAL_RISK"], g);
++    }
+ 
+-    let nodes=if is_five{vec![a,b,c,d,e]}else if is_four{vec![a,b,c,d]}else if is_tri||is_path{vec![a,b,c]}else if is_pair{vec![a,b]}else{vec![a]};
+-    let v=avg(ctx,&nodes);
+-    let ok=if is_path {
+-        nodes.windows(2).all(|w| score(ctx,w[0]) <= score(ctx,w[1])+15.0) && v>=t
+-    } else if family=="DIV"||family=="REV"||family.contains("SURP") {
+-        high(ctx,a,t) && low(ctx,b,t)
+-    } else if i%4==1 {
+-        nodes.iter().all(|n| low(ctx,n,t))
+-    } else if i%4==2 {
+-        nodes.iter().filter(|n| high(ctx,n,t)).count()*2 >= nodes.len()
++    let nodes = if is_five {
++        vec![a, b, c, d, e]
++    } else if is_four {
++        vec![a, b, c, d]
++    } else if is_tri || is_path {
++        vec![a, b, c]
++    } else if is_pair {
++        vec![a, b]
+     } else {
+-        nodes.iter().all(|n| high(ctx,n,t))
++        vec![a]
+     };
+-    (ok,nodes,v)
++    let v = avg(ctx, &nodes);
++    let ok = if is_path {
++        nodes
++            .windows(2)
++            .all(|w| score(ctx, w[0]) <= score(ctx, w[1]) + 15.0)
++            && v >= t
++    } else if family == "DIV" || family == "REV" || family.contains("SURP") {
++        high(ctx, a, t) && low(ctx, b, t)
++    } else if i % 4 == 1 {
++        nodes.iter().all(|n| low(ctx, n, t))
++    } else if i % 4 == 2 {
++        nodes.iter().filter(|n| high(ctx, n, t)).count() * 2 >= nodes.len()
++    } else {
++        nodes.iter().all(|n| high(ctx, n, t))
++    };
++    (ok, nodes, v)
+ }
+ 
+-pub fn evaluate(ctx:&Context,max_hits:usize)->(usize,Vec<RuleHit>) {
+-    let mut hits=Vec::with_capacity(max_hits.min(64));
+-    let mut evaluated=0usize;
+-    for (family,count) in FAMILIES {
++pub fn evaluate(ctx: &Context, max_hits: usize) -> (usize, Vec<RuleHit>) {
++    let mut hits = Vec::with_capacity(max_hits.min(64));
++    let mut evaluated = 0usize;
++    for (family, count) in FAMILIES {
+         for i in 0..*count {
+-            evaluated+=1;
+-            let (ok,nodes,v)=trigger(family,i,ctx);
+-            if ok && hits.len()<max_hits {
+-                let severity=severity_from(v);
+-                let id=format!("{}-{:05}",family,i+1);
+-                let title=format!("{} 규칙 활성",family);
+-                let message=format!("{} | 관련축={} | 합성점수={:.1}",family,nodes.join("→"),v);
+-                hits.push(RuleHit{id,priority:if v>=75.0{"P1".into()}else{"P2".into()},scope:"SYSTEM".into(),severity:severity.into(),title,message});
++            evaluated += 1;
++            let (ok, nodes, v) = trigger(family, i, ctx);
++            if ok && hits.len() < max_hits {
++                let severity = severity_from(v);
++                let id = format!("{}-{:05}", family, i + 1);
++                let title = format!("{} 규칙 활성", family);
++                let message = format!(
++                    "{} | 관련축={} | 합성점수={:.1}",
++                    family,
++                    nodes.join("→"),
++                    v
++                );
++                hits.push(RuleHit {
++                    id,
++                    priority: if v >= 75.0 { "P1".into() } else { "P2".into() },
++                    scope: "SYSTEM".into(),
++                    severity: severity.into(),
++                    title,
++                    message,
++                });
+             }
+         }
+     }
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:129:
+-    (evaluated,hits)
++    (evaluated, hits)
+ }
+ 
+ #[cfg(test)]
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/rulebook.rs:133:
+ mod tests {
+     use super::*;
+-    #[test] fn exact_topology(){ assert_eq!(count_rules(),27_494); assert_eq!(FAMILIES.len(),85); }
+-    #[test] fn evaluation_count(){ let c=Context::default(); let (n,_)=evaluate(&c,64); assert_eq!(n,27_494); }
++    #[test]
++    fn exact_topology() {
++        assert_eq!(count_rules(), 27_494);
++        assert_eq!(FAMILIES.len(), 85);
++    }
++    #[test]
++    fn evaluation_count() {
++        let c = Context::default();
++        let (n, _) = evaluate(&c, 64);
++        assert_eq!(n, 27_494);
++    }
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/scoring.rs:1:
+-pub fn percentile_rank(history:&[f64], x:f64) -> f64 {
+-    if history.is_empty() { return 50.0; }
+-    let n=history.iter().filter(|v| **v <= x).count();
++pub fn percentile_rank(history: &[f64], x: f64) -> f64 {
++    if history.is_empty() {
++        return 50.0;
++    }
++    let n = history.iter().filter(|v| **v <= x).count();
+     100.0 * n as f64 / history.len() as f64
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/scoring.rs:7:
+-pub fn clamp(v:f64)->f64 { v.clamp(0.0,100.0) }
++pub fn clamp(v: f64) -> f64 {
++    v.clamp(0.0, 100.0)
++}
+ 
+-pub fn risk_from_z_like(history:&[f64], current:f64, invert:bool)->f64 {
+-    let mut p=percentile_rank(history,current);
+-    if invert { p=100.0-p; }
++pub fn risk_from_z_like(history: &[f64], current: f64, invert: bool) -> f64 {
++    let mut p = percentile_rank(history, current);
++    if invert {
++        p = 100.0 - p;
++    }
+     clamp(p)
+ }
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/scoring.rs:15:
+-pub fn mean(xs:&[f64])->f64 { if xs.is_empty(){0.0}else{xs.iter().sum::<f64>()/xs.len() as f64} }
++pub fn mean(xs: &[f64]) -> f64 {
++    if xs.is_empty() {
++        0.0
++    } else {
++        xs.iter().sum::<f64>() / xs.len() as f64
++    }
++}
+ 
+Diff in /home/runner/work/ECONOMICS/ECONOMICS/src/server.rs:1:
+ use crate::db::Db;
+-use std::{io::{Read,Write},net::TcpListener,path::PathBuf};
++use std::{
++    io::{Read, Write},
++    net::TcpListener,
++    path::PathBuf,
++};
+ 
+-pub fn serve(host:&str,db_path:PathBuf)->Result<(),Box<dyn std::error::Error>>{
+-    let listener=TcpListener::bind(host)?;println!("ECONOMICS Radar: http://{host}");
+-    for stream in listener.incoming(){let mut stream=stream?;let mut buf=[0u8;2048];let n=stream.read(&mut buf)?;let req=String::from_utf8_lossy(&buf[..n]);let api=req.starts_with("GET /api/snapshot ");let db=Db::open(&db_path)?;let json=db.latest_snapshot_json()?.unwrap_or_else(||"{}".into());let body=if api{json}else{format!(r#"<!doctype html><meta charset=utf-8><title>ECONOMICS Radar</title><style>body{{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}pre{{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}}</style><h1>ECONOMICS Radar</h1><p>Rust low-memory financial risk monitor</p><pre id=x></pre><script>async function f(){{let r=await fetch('/api/snapshot');document.querySelector('#x').textContent=JSON.stringify(await r.json(),null,2)}}f();setInterval(f,60000)</script>"#)};let ct=if api{"application/json"}else{"text/html; charset=utf-8"};write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.as_bytes().len(),body)?;}
++pub fn serve(host: &str, db_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
++    let listener = TcpListener::bind(host)?;
++    println!("ECONOMICS Radar: http://{host}");
++    for stream in listener.incoming() {
++        let mut stream = stream?;
++        let mut buf = [0u8; 2048];
++        let n = stream.read(&mut buf)?;
++        let req = String::from_utf8_lossy(&buf[..n]);
++        let api = req.starts_with("GET /api/snapshot ");
++        let db = Db::open(&db_path)?;
++        let json = db.latest_snapshot_json()?.unwrap_or_else(|| "{}".into());
++        let body = if api {
++            json
++        } else {
++            format!(
++                r#"<!doctype html><meta charset=utf-8><title>ECONOMICS Radar</title><style>body{{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#111;color:#eee}}pre{{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}}</style><h1>ECONOMICS Radar</h1><p>Rust low-memory financial risk monitor</p><pre id=x></pre><script>async function f(){{let r=await fetch('/api/snapshot');document.querySelector('#x').textContent=JSON.stringify(await r.json(),null,2)}}f();setInterval(f,60000)</script>"#
++            )
++        };
++        let ct = if api {
++            "application/json"
++        } else {
++            "text/html; charset=utf-8"
++        };
++        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: {ct}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.as_bytes().len(),body)?;
++    }
+     Ok(())
+ }
+ 
 FMT_EXIT=1
 == cargo test ==
 [1m[92m    Updating[0m crates.io index
 [1m[92m     Locking[0m 157 packages to latest compatible versions
 [1m[92m      Adding[0m reqwest v0.12.28 [1m[33m(available: v0.13.4)[0m
 [1m[92m      Adding[0m rusqlite v0.32.1 [1m[33m(available: v0.40.2)[0m
-[1m[92m Downloading[0m crates ...
-[1m[92m  Downloaded[0m atomic-waker v1.1.2
-[1m[92m  Downloaded[0m try-lock v0.2.5
-[1m[92m  Downloaded[0m ahash v0.8.12
-[1m[92m  Downloaded[0m autocfg v1.5.1
-[1m[92m  Downloaded[0m percent-encoding v2.3.2
-[1m[92m  Downloaded[0m tracing-core v0.1.36
-[1m[92m  Downloaded[0m base64 v0.22.1
-[1m[92m  Downloaded[0m bitflags v2.13.1
-[1m[92m  Downloaded[0m tower-service v0.3.3
-[1m[92m  Downloaded[0m unicode-ident v1.0.24
-[1m[92m  Downloaded[0m futures-channel v0.3.34
-[1m[92m  Downloaded[0m fallible-streaming-iterator v0.1.9
-[1m[92m  Downloaded[0m futures-io v0.3.34
-[1m[92m  Downloaded[0m urlencoding v2.1.3
-[1m[92m  Downloaded[0m version_check v0.9.5
-[1m[92m  Downloaded[0m want v0.3.1
-[1m[92m  Downloaded[0m syn v3.0.3
-[1m[92m  Downloaded[0m tokio-rustls v0.26.4
-[1m[92m  Downloaded[0m cpufeatures v0.3.0
-[1m[92m  Downloaded[0m futures-sink v0.3.34
-[1m[92m  Downloaded[0m http-body v1.1.0
-[1m[92m  Downloaded[0m zerofrom-derive v0.1.7
-[1m[92m  Downloaded[0m form_urlencoded v1.2.2
-[1m[92m  Downloaded[0m utf8_iter v1.0.4
-[1m[92m  Downloaded[0m cfg-if v1.0.4
-[1m[92m  Downloaded[0m serde_urlencoded v0.7.1
-[1m[92m  Downloaded[0m tinystr v0.8.4
-[1m[92m  Downloaded[0m tower-layer v0.3.3
-[1m[92m  Downloaded[0m untrusted v0.9.0
-[1m[92m  Downloaded[0m find-msvc-tools v0.1.11
-[1m[92m  Downloaded[0m num-traits v0.2.19
-[1m[92m  Downloaded[0m quinn-udp v0.5.15
-[1m[92m  Downloaded[0m thiserror-impl v2.0.20
-[1m[92m  Downloaded[0m yoke-derive v0.8.2
-[1m[92m  Downloaded[0m chacha20 v0.10.1
-[1m[92m  Downloaded[0m futures-task v0.3.34
-[1m[92m  Downloaded[0m itoa v1.0.18
-[1m[92m  Downloaded[0m proc-macro2 v1.0.107
-[1m[92m  Downloaded[0m rustc-hash v2.1.3
-[1m[92m  Downloaded[0m stable_deref_trait v1.2.1
-[1m[92m  Downloaded[0m tinyvec_macros v0.1.1
-[1m[92m  Downloaded[0m zerofrom v0.1.8
-[1m[92m  Downloaded[0m writeable v0.6.4
-[1m[92m  Downloaded[0m zeroize v1.9.0
-[1m[92m  Downloaded[0m zerovec-derive v0.11.5
-[1m[92m  Downloaded[0m zmij v1.0.23
-[1m[92m  Downloaded[0m cfg_aliases v0.2.2
-[1m[92m  Downloaded[0m idna_adapter v1.2.2
-[1m[92m  Downloaded[0m rand_core v0.10.1
-[1m[92m  Downloaded[0m yoke v0.8.3
-[1m[92m  Downloaded[0m futures-core v0.3.34
-[1m[92m  Downloaded[0m lru-slab v0.1.2
-[1m[92m  Downloaded[0m subtle v2.6.1
-[1m[92m  Downloaded[0m slab v0.4.12
-[1m[92m  Downloaded[0m quote v1.0.47
-[1m[92m  Downloaded[0m rand_pcg v0.10.2
-[1m[92m  Downloaded[0m sync_wrapper v1.0.2
-[1m[92m  Downloaded[0m url v2.5.8
-[1m[92m  Downloaded[0m zerotrie v0.2.5
-[1m[92m  Downloaded[0m displaydoc v0.2.7
-[1m[92m  Downloaded[0m getrandom v0.2.17
-[1m[92m  Downloaded[0m pkg-config v0.3.34
-[1m[92m  Downloaded[0m hashlink v0.9.1
-[1m[92m  Downloaded[0m httparse v1.10.1
-[1m[92m  Downloaded[0m pin-project-lite v0.2.17
-[1m[92m  Downloaded[0m potential_utf v0.1.6
-[1m[92m  Downloaded[0m shlex v2.0.1
-[1m[92m  Downloaded[0m synstructure v0.13.2
-[1m[92m  Downloaded[0m thiserror v2.0.20
-[1m[92m  Downloaded[0m zerovec v0.11.8
-[1m[92m  Downloaded[0m once_cell v1.21.4
-[1m[92m  Downloaded[0m getrandom v0.4.3
-[1m[92m  Downloaded[0m hyper-rustls v0.27.9
-[1m[92m  Downloaded[0m ipnet v2.12.1
-[1m[92m  Downloaded[0m litemap v0.8.3
-[1m[92m  Downloaded[0m rustls-pki-types v1.15.1
-[1m[92m  Downloaded[0m smallvec v1.15.2
-[1m[92m  Downloaded[0m webpki-roots v1.0.9
-[1m[92m  Downloaded[0m fallible-iterator v0.3.0
-[1m[92m  Downloaded[0m http-body-util v0.1.5
-[1m[92m  Downloaded[0m iana-time-zone v0.1.65
-[1m[92m  Downloaded[0m icu_provider v2.3.0
-[1m[92m  Downloaded[0m ryu v1.0.23
-[1m[92m  Downloaded[0m serde_derive v1.0.229
-[1m[92m  Downloaded[0m vcpkg v0.2.15
-[1m[92m  Downloaded[0m cc v1.4.3
-[1m[92m  Downloaded[0m log v0.4.33
-[1m[92m  Downloaded[0m socket2 v0.6.5
-[1m[92m  Downloaded[0m tinyvec v1.12.0
-[1m[92m  Downloaded[0m tracing v0.1.44
-[1m[92m  Downloaded[0m zerocopy v0.8.56
-[1m[92m  Downloaded[0m bytes v1.12.1
-[1m[92m  Downloaded[0m icu_normalizer_data v2.3.0
-[1m[92m  Downloaded[0m hashbrown v0.14.5
-[1m[92m  Downloaded[0m serde_core v1.0.229
-[1m[92m  Downloaded[0m icu_collections v2.3.0
-[1m[92m  Downloaded[0m icu_locale_core v2.3.0
-[1m[92m  Downloaded[0m quinn v0.11.11
-[1m[92m  Downloaded[0m rustls-webpki v0.103.14
-[1m[92m  Downloaded[0m serde v1.0.229
-[1m[92m  Downloaded[0m http v1.5.0
-[1m[92m  Downloaded[0m memchr v2.8.3
-[1m[92m  Downloaded[0m rand v0.10.2
-[1m[92m  Downloaded[0m tower v0.5.3
-[1m[92m  Downloaded[0m icu_properties v2.3.0
-[1m[92m  Downloaded[0m hyper-util v0.1.20
-[1m[92m  Downloaded[0m mio v1.2.2
-[1m[92m  Downloaded[0m tower-http v0.6.11
-[1m[92m  Downloaded[0m idna v1.1.0
-[1m[92m  Downloaded[0m serde_json v1.0.151
-[1m[92m  Downloaded[0m chrono v0.4.45
-[1m[92m  Downloaded[0m futures-util v0.3.34
-[1m[92m  Downloaded[0m hyper v1.11.0
-[1m[92m  Downloaded[0m icu_properties_data v2.3.0
-[1m[92m  Downloaded[0m reqwest v0.12.28
-[1m[92m  Downloaded[0m rusqlite v0.32.1
-[1m[92m  Downloaded[0m quinn-proto v0.11.17
-[1m[92m  Downloaded[0m syn v2.0.119
-[1m[92m  Downloaded[0m rustls v0.23.43
-[1m[92m  Downloaded[0m icu_normalizer v2.3.0
-[1m[92m  Downloaded[0m libc v0.2.189
-[1m[92m  Downloaded[0m tokio v1.53.1
-[1m[92m  Downloaded[0m ring v0.17.14
-[1m[92m  Downloaded[0m libsqlite3-sys v0.30.1
-[1m[92m   Compiling[0m proc-macro2 v1.0.107
-[1m[92m   Compiling[0m unicode-ident v1.0.24
-[1m[92m   Compiling[0m quote v1.0.47
-[1m[92m   Compiling[0m libc v0.2.189
-[1m[92m   Compiling[0m stable_deref_trait v1.2.1
-[1m[92m   Compiling[0m find-msvc-tools v0.1.11
-[1m[92m   Compiling[0m shlex v2.0.1
-[1m[92m   Compiling[0m cc v1.4.3
-[1m[92m   Compiling[0m bytes v1.12.1
-[1m[92m   Compiling[0m once_cell v1.21.4
-[1m[92m   Compiling[0m cfg-if v1.0.4
-[1m[92m   Compiling[0m pin-project-lite v0.2.17
-[1m[92m   Compiling[0m smallvec v1.15.2
-[1m[92m   Compiling[0m futures-core v0.3.34
-[1m[92m   Compiling[0m itoa v1.0.18
-[1m[92m   Compiling[0m writeable v0.6.4
-[1m[92m   Compiling[0m litemap v0.8.3
-[1m[92m   Compiling[0m ring v0.17.14
-[1m[92m   Compiling[0m futures-sink v0.3.34
-[1m[92m   Compiling[0m icu_properties_data v2.3.0
-[1m[92m   Compiling[0m utf8_iter v1.0.4
-[1m[92m   Compiling[0m icu_normalizer_data v2.3.0
-[1m[92m   Compiling[0m syn v3.0.3
-[1m[92m   Compiling[0m syn v2.0.119
-[1m[92m   Compiling[0m socket2 v0.6.5
-[1m[92m   Compiling[0m mio v1.2.2
-[1m[92m   Compiling[0m tokio v1.53.1
-[1m[92m   Compiling[0m synstructure v0.13.2
-[1m[92m   Compiling[0m zerovec-derive v0.11.5
-[1m[92m   Compiling[0m zerofrom-derive v0.1.7
-[1m[92m   Compiling[0m zerofrom v0.1.8
-[1m[92m   Compiling[0m yoke-derive v0.8.2
-[1m[92m   Compiling[0m displaydoc v0.2.7
-[1m[92m   Compiling[0m http v1.5.0
-[1m[92m   Compiling[0m memchr v2.8.3
-[1m[92m   Compiling[0m yoke v0.8.3
-[1m[92m   Compiling[0m zerovec v0.11.8
-[1m[92m   Compiling[0m zerotrie v0.2.5
-[1m[92m   Compiling[0m tinystr v0.8.4
-[1m[92m   Compiling[0m potential_utf v0.1.6
-[1m[92m   Compiling[0m icu_locale_core v2.3.0
-[1m[92m   Compiling[0m percent-encoding v2.3.2
-[1m[92m   Compiling[0m icu_collections v2.3.0
-[1m[92m   Compiling[0m zeroize v1.9.0
-[1m[92m   Compiling[0m rustls-pki-types v1.15.1
-[1m[92m   Compiling[0m http-body v1.1.0
-[1m[92m   Compiling[0m getrandom v0.2.17
-[1m[92m   Compiling[0m futures-task v0.3.34
-[1m[92m   Compiling[0m version_check v0.9.5
-[1m[92m   Compiling[0m icu_provider v2.3.0
-[1m[92m   Compiling[0m slab v0.4.12
-[1m[92m   Compiling[0m httparse v1.10.1
-[1m[92m   Compiling[0m untrusted v0.9.0
-[1m[92m   Compiling[0m serde_core v1.0.229
-[1m[92m   Compiling[0m futures-io v0.3.34
-[1m[92m   Compiling[0m zerocopy v0.8.56
-[1m[92m   Compiling[0m futures-util v0.3.34
-[1m[92m   Compiling[0m icu_normalizer v2.3.0
-[1m[92m   Compiling[0m icu_properties v2.3.0
-[1m[92m   Compiling[0m ahash v0.8.12
-[1m[92m   Compiling[0m rustls v0.23.43
-[1m[92m   Compiling[0m tower-service v0.3.3
-[1m[92m   Compiling[0m try-lock v0.2.5
-[1m[92m   Compiling[0m want v0.3.1
-[1m[92m   Compiling[0m rustls-webpki v0.103.14
-[1m[92m   Compiling[0m idna_adapter v1.2.2
-[1m[92m   Compiling[0m form_urlencoded v1.2.2
-[1m[92m   Compiling[0m futures-channel v0.3.34
-[1m[92m   Compiling[0m tracing-core v0.1.36
-[1m[92m   Compiling[0m atomic-waker v1.1.2
-[1m[92m   Compiling[0m zmij v1.0.23
-[1m[92m   Compiling[0m serde v1.0.229
-[1m[92m   Compiling[0m vcpkg v0.2.15
-[1m[92m   Compiling[0m subtle v2.6.1
-[1m[92m   Compiling[0m pkg-config v0.3.34
-[1m[92m   Compiling[0m autocfg v1.5.1
-[1m[92m   Compiling[0m libsqlite3-sys v0.30.1
-[1m[92m   Compiling[0m num-traits v0.2.19
-[1m[92m   Compiling[0m tracing v0.1.44
-[1m[92m   Compiling[0m hyper v1.11.0
-[1m[92m   Compiling[0m idna v1.1.0
-[1m[92m   Compiling[0m serde_derive v1.0.229
-[1m[92m   Compiling[0m sync_wrapper v1.0.2
-[1m[92m   Compiling[0m ipnet v2.12.1
-[1m[92m   Compiling[0m tower-layer v0.3.3
-[1m[92m   Compiling[0m serde_json v1.0.151
-[1m[92m   Compiling[0m bitflags v2.13.1
-[1m[92m   Compiling[0m base64 v0.22.1
-[1m[92m   Compiling[0m tower v0.5.3
-[1m[92m   Compiling[0m hyper-util v0.1.20
-[1m[92m   Compiling[0m url v2.5.8
-[1m[92m   Compiling[0m tokio-rustls v0.26.4
-[1m[92m   Compiling[0m hashbrown v0.14.5
-[1m[92m   Compiling[0m webpki-roots v1.0.9
-[1m[92m   Compiling[0m ryu v1.0.23
-[1m[92m   Compiling[0m serde_urlencoded v0.7.1
-[1m[92m   Compiling[0m hyper-rustls v0.27.9
-[1m[92m   Compiling[0m hashlink v0.9.1
-[1m[92m   Compiling[0m tower-http v0.6.11
-[1m[92m   Compiling[0m http-body-util v0.1.5
-[1m[92m   Compiling[0m fallible-iterator v0.3.0
-[1m[92m   Compiling[0m log v0.4.33
-[1m[92m   Compiling[0m iana-time-zone v0.1.65
-[1m[92m   Compiling[0m fallible-streaming-iterator v0.1.9
-[1m[92m   Compiling[0m chrono v0.4.45
-[1m[92m   Compiling[0m reqwest v0.12.28
-[1m[92m   Compiling[0m urlencoding v2.1.3
-[1m[92m   Compiling[0m rusqlite v0.32.1
 [1m[92m   Compiling[0m economics-radar v0.2.0 (/home/runner/work/ECONOMICS/ECONOMICS)
-[1m[91merror[0m[1m: empty character literal[0m
-  [1m[94m--> [0msrc/collectors.rs:45:92
+[1m[33mwarning[0m[1m: fields `priority` and `scope` are never read[0m
+  [1m[94m--> [0msrc/rulebook.rs:10:9
    [1m[94m|[0m
-[1m[94m45[0m [1m[94m|[0m [1m[94m...[0m   if let Some(x)=row.get(key).and_then(Value::as_str).and_then(|s|s.replace(',','').parse::<f64>().ok()){db.put("treasury",name,[1m[94m...[0m
-   [1m[94m|[0m                                                                                      [1m[91m^[0m [1m[91mempty character literal[0m
+[1m[94m 8[0m [1m[94m|[0m pub struct RuleHit {
+   [1m[94m|[0m            [1m[94m-------[0m [1m[94mfields in this struct[0m
+[1m[94m 9[0m [1m[94m|[0m     pub id: String,
+[1m[94m10[0m [1m[94m|[0m     pub priority: String,
+   [1m[94m|[0m         [1m[33m^^^^^^^^[0m
+[1m[94m11[0m [1m[94m|[0m     pub scope: String,
+   [1m[94m|[0m         [1m[33m^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `RuleHit` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
-[1m[91merror[0m: could not compile `economics-radar` (bin "EconomicsRadar" test) due to 1 previous error
-TEST_EXIT=101
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar" test) generated 1 warning
+[1m[92m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 11.87s
+[1m[92m     Running[0m unittests src/main.rs (target/debug/deps/EconomicsRadar-f144e76ca4dc720d)
+
+running 3 tests
+test dsl::tests::simple ... ok
+test rulebook::tests::exact_topology ... ok
+test rulebook::tests::evaluation_count ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+TEST_EXIT=0
 == cargo clippy ==
-[1m[92m    Checking[0m stable_deref_trait v1.2.1
-[1m[92m    Checking[0m libc v0.2.189
-[1m[92m    Checking[0m zerofrom v0.1.8
-[1m[92m    Checking[0m once_cell v1.21.4
-[1m[92m    Checking[0m pin-project-lite v0.2.17
-[1m[92m    Checking[0m yoke v0.8.3
-[1m[92m    Checking[0m bytes v1.12.1
-[1m[92m    Checking[0m cfg-if v1.0.4
-[1m[92m    Checking[0m itoa v1.0.18
-[1m[92m    Checking[0m zerovec v0.11.8
-[1m[92m    Checking[0m smallvec v1.15.2
-[1m[92m    Checking[0m futures-core v0.3.34
-[1m[92m    Checking[0m litemap v0.8.3
-[1m[92m    Checking[0m writeable v0.6.4
-[1m[92m    Checking[0m zerotrie v0.2.5
-[1m[92m    Checking[0m futures-sink v0.3.34
-[1m[92m    Checking[0m utf8_iter v1.0.4
-[1m[92m    Checking[0m tinystr v0.8.4
-[1m[92m    Checking[0m potential_utf v0.1.6
-[1m[92m    Checking[0m icu_collections v2.3.0
-[1m[92m    Checking[0m icu_locale_core v2.3.0
-[1m[92m    Checking[0m http v1.5.0
-[1m[92m    Checking[0m socket2 v0.6.5
-[1m[92m    Checking[0m mio v1.2.2
-[1m[92m    Checking[0m zeroize v1.9.0
-[1m[92m    Checking[0m percent-encoding v2.3.2
-[1m[92m    Checking[0m tokio v1.53.1
-[1m[92m    Checking[0m memchr v2.8.3
-[1m[92m    Checking[0m http-body v1.1.0
-[1m[92m    Checking[0m rustls-pki-types v1.15.1
-[1m[92m    Checking[0m icu_provider v2.3.0
-[1m[92m    Checking[0m getrandom v0.2.17
-[1m[92m    Checking[0m icu_normalizer_data v2.3.0
-[1m[92m    Checking[0m icu_properties_data v2.3.0
-[1m[92m    Checking[0m untrusted v0.9.0
-[1m[92m    Checking[0m slab v0.4.12
-[1m[92m    Checking[0m futures-task v0.3.34
-[1m[92m    Checking[0m futures-io v0.3.34
-[1m[92m    Checking[0m icu_properties v2.3.0
-[1m[92m    Checking[0m ring v0.17.14
-[1m[92m    Checking[0m futures-util v0.3.34
-[1m[92m    Checking[0m icu_normalizer v2.3.0
-[1m[92m    Checking[0m try-lock v0.2.5
-[1m[92m    Checking[0m tower-service v0.3.3
-[1m[92m    Checking[0m want v0.3.1
-[1m[92m    Checking[0m rustls-webpki v0.103.14
-[1m[92m    Checking[0m idna_adapter v1.2.2
-[1m[92m    Checking[0m zerocopy v0.8.56
-[1m[92m    Checking[0m httparse v1.10.1
-[1m[92m    Checking[0m serde_core v1.0.229
-[1m[92m    Checking[0m form_urlencoded v1.2.2
-[1m[92m    Checking[0m futures-channel v0.3.34
-[1m[92m    Checking[0m tracing-core v0.1.36
-[1m[92m    Checking[0m subtle v2.6.1
-[1m[92m    Checking[0m atomic-waker v1.1.2
-[1m[92m    Checking[0m hyper v1.11.0
-[1m[92m    Checking[0m tracing v0.1.44
-[1m[92m    Checking[0m rustls v0.23.43
-[1m[92m    Checking[0m idna v1.1.0
-[1m[92m    Checking[0m sync_wrapper v1.0.2
-[1m[92m    Checking[0m base64 v0.22.1
-[1m[92m    Checking[0m bitflags v2.13.1
-[1m[92m    Checking[0m ipnet v2.12.1
-[1m[92m    Checking[0m tower-layer v0.3.3
-[1m[92m    Checking[0m tower v0.5.3
-[1m[92m    Checking[0m hyper-util v0.1.20
-[1m[92m    Checking[0m serde v1.0.229
-[1m[92m    Checking[0m url v2.5.8
-[1m[92m    Checking[0m zmij v1.0.23
-[1m[92m    Checking[0m ahash v0.8.12
-[1m[92m    Checking[0m hashbrown v0.14.5
-[1m[92m    Checking[0m webpki-roots v1.0.9
-[1m[92m    Checking[0m ryu v1.0.23
-[1m[92m    Checking[0m serde_json v1.0.151
-[1m[92m    Checking[0m serde_urlencoded v0.7.1
-[1m[92m    Checking[0m libsqlite3-sys v0.30.1
-[1m[92m    Checking[0m tokio-rustls v0.26.4
-[1m[92m    Checking[0m hashlink v0.9.1
-[1m[92m    Checking[0m num-traits v0.2.19
-[1m[92m    Checking[0m hyper-rustls v0.27.9
-[1m[92m    Checking[0m tower-http v0.6.11
-[1m[92m    Checking[0m http-body-util v0.1.5
-[1m[92m    Checking[0m log v0.4.33
-[1m[92m    Checking[0m fallible-streaming-iterator v0.1.9
-[1m[92m    Checking[0m fallible-iterator v0.3.0
-[1m[92m    Checking[0m iana-time-zone v0.1.65
-[1m[92m    Checking[0m reqwest v0.12.28
-[1m[92m    Checking[0m urlencoding v2.1.3
-[1m[92m    Checking[0m chrono v0.4.45
-[1m[92m    Checking[0m rusqlite v0.32.1
 [1m[92m    Checking[0m economics-radar v0.2.0 (/home/runner/work/ECONOMICS/ECONOMICS)
-[1m[91merror[0m[1m: empty character literal[0m
-  [1m[94m--> [0msrc/collectors.rs:45:92
-   [1m[94m|[0m
-[1m[94m45[0m [1m[94m|[0m [1m[94m...[0m   if let Some(x)=row.get(key).and_then(Value::as_str).and_then(|s|s.replace(',','').parse::<f64>().ok()){db.put("treasury",name,[1m[94m...[0m
-   [1m[94m|[0m                                                                                      [1m[91m^[0m [1m[91mempty character literal[0m
+[1m[33mwarning[0m[1m: method `value` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:5:23
+  [1m[94m|[0m
+[1m[94m5[0m [1m[94m|[0m impl Context { pub fn value(&self,k:&str)->Option<f64>{self.values.get(k).copied().or_else(||self.scores.get(k).copied())} }
+  [1m[94m|[0m [1m[94m------------[0m          [1m[33m^^^^^[0m
+  [1m[94m|[0m [1m[94m|[0m
+  [1m[94m|[0m [1m[94mmethod in this implementation[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
-[1m[91merror[0m: could not compile `economics-radar` (bin "EconomicsRadar" test) due to 1 previous error
-[1m[33mwarning[0m: build failed, waiting for other jobs to finish...
-[1m[91merror[0m: could not compile `economics-radar` (bin "EconomicsRadar") due to 1 previous error
-CLIPPY_EXIT=101
+[1m[33mwarning[0m[1m: function `cmp` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:7:4
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m fn cmp(lhs:f64,op:&str,rhs:f64)->bool{match op{">"=>lhs>rhs,">="=>lhs>=rhs,"<"=>lhs<rhs,"<="=>lhs<=rhs,"=="=> (lhs-rhs).abs()<f64::EP[1m[94m...[0m
+  [1m[94m|[0m    [1m[33m^^^[0m
+
+[1m[33mwarning[0m[1m: function `eval` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:9:8
+  [1m[94m|[0m
+[1m[94m9[0m [1m[94m|[0m pub fn eval(expr:&str,ctx:&Context)->bool {
+  [1m[94m|[0m        [1m[33m^^^^[0m
+
+[1m[33mwarning[0m[1m: function `resolve` is never used[0m
+  [1m[94m--> [0msrc/dsl.rs:18:4
+   [1m[94m|[0m
+[1m[94m18[0m [1m[94m|[0m fn resolve(s:&str,ctx:&Context)->Option<f64>{
+   [1m[94m|[0m    [1m[33m^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `split_top` is never used[0m
+  [1m[94m--> [0msrc/dsl.rs:24:4
+   [1m[94m|[0m
+[1m[94m24[0m [1m[94m|[0m fn split_top<'a>(s:&'a str,needle:&str)->Option<(&'a str,&'a str)>{
+   [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: fields `priority` and `scope` are never read[0m
+  [1m[94m--> [0msrc/rulebook.rs:10:9
+   [1m[94m|[0m
+[1m[94m 8[0m [1m[94m|[0m pub struct RuleHit {
+   [1m[94m|[0m            [1m[94m-------[0m [1m[94mfields in this struct[0m
+[1m[94m 9[0m [1m[94m|[0m     pub id: String,
+[1m[94m10[0m [1m[94m|[0m     pub priority: String,
+   [1m[94m|[0m         [1m[33m^^^^^^^^[0m
+[1m[94m11[0m [1m[94m|[0m     pub scope: String,
+   [1m[94m|[0m         [1m[33m^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `RuleHit` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[33mwarning[0m[1m: fields `priority` and `scope` are never read[0m
+  [1m[94m--> [0msrc/rulebook.rs:10:9
+   [1m[94m|[0m
+[1m[94m 8[0m [1m[94m|[0m pub struct RuleHit {
+   [1m[94m|[0m            [1m[94m-------[0m [1m[94mfields in this struct[0m
+[1m[94m 9[0m [1m[94m|[0m     pub id: String,
+[1m[94m10[0m [1m[94m|[0m     pub priority: String,
+   [1m[94m|[0m         [1m[33m^^^^^^^^[0m
+[1m[94m11[0m [1m[94m|[0m     pub scope: String,
+   [1m[94m|[0m         [1m[33m^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `RuleHit` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[33mwarning[0m[1m: manual implementation of `.is_multiple_of()`[0m
+  [1m[94m--> [0msrc/rulebook.rs:91:19
+   [1m[94m|[0m
+[1m[94m91[0m [1m[94m|[0m         let ok=if i%2==0 { conf < t } else { conf >= t };
+   [1m[94m|[0m                   [1m[33m^^^^^^[0m [1m[33mhelp: replace with: `i.is_multiple_of(2)`[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#manual_is_multiple_of
+   [1m[94m= [0m[1mnote[0m: `#[warn(clippy::manual_is_multiple_of)]` on by default
+
+[1m[33mwarning[0m[1m: useless use of `format!`[0m
+ [1m[94m--> [0msrc/server.rs:6:322
+  [1m[94m|[0m
+[1m[94m6[0m [1m[94m|[0m [1m[94m...[0mse{format!(r#"<!doctype html><meta charset=utf-8[1m[94m...[0mnull,2)}}f();setInterval(f,60000)</script>"#)};l[1m[94m...[0m
+  [1m[94m|[0m       [1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[1m[94m...[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: consider using `.to_string()`: `r#"<!doctype html><meta charset=utf-8><title>ECONOMICS Radar</title><style>body{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px;background:#111;color:#eee}pre{background:#1d1d1d;padding:20px;border-radius:12px;overflow:auto}</style><h1>ECONOMICS Radar</h1><p>Rust low-memory financial risk monitor</p><pre id=x></pre><script>async function f(){let r=await fetch('/api/snapshot');document.querySelector('#x').textContent=JSON.stringify(await r.json(),null,2)}f();setInterval(f,60000)</script>"#.to_string()`[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#useless_format
+  [1m[94m= [0m[1mnote[0m: `#[warn(clippy::useless_format)]` on by default
+
+[1m[33mwarning[0m[1m: needless call to `as_bytes`[0m
+ [1m[94m--> [0msrc/server.rs:6:1027
+  [1m[94m|[0m
+[1m[94m6[0m [1m[94m|[0m [1m[94m...[0mtion: close\r\n\r\n{}",body.as_bytes().len(),body)?;}
+  [1m[94m|[0m                           [1m[33m^^^^^^^^^^^^^^^^^^^^^[0m [1m[33mhelp: `len()` can be called directly on strings: `body.len()`[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mhelp[0m: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_as_bytes
+  [1m[94m= [0m[1mnote[0m: `#[warn(clippy::needless_as_bytes)]` on by default
+
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar") generated 9 warnings (run `cargo clippy --fix --bin "EconomicsRadar" -p economics-radar -- ` to apply 3 suggestions)
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar" test) generated 4 warnings (3 duplicates)
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 5.32s
+CLIPPY_EXIT=0
 == rule topology ==
 [1m[92m   Compiling[0m economics-radar v0.2.0 (/home/runner/work/ECONOMICS/ECONOMICS)
-[1m[91merror[0m[1m: empty character literal[0m
-  [1m[94m--> [0msrc/collectors.rs:45:92
-   [1m[94m|[0m
-[1m[94m45[0m [1m[94m|[0m [1m[94m...[0m   if let Some(x)=row.get(key).and_then(Value::as_str).and_then(|s|s.replace(',','').parse::<f64>().ok()){db.put("treasury",name,[1m[94m...[0m
-   [1m[94m|[0m                                                                                      [1m[91m^[0m [1m[91mempty character literal[0m
+[1m[33mwarning[0m[1m: method `value` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:5:23
+  [1m[94m|[0m
+[1m[94m5[0m [1m[94m|[0m impl Context { pub fn value(&self,k:&str)->Option<f64>{self.values.get(k).copied().or_else(||self.scores.get(k).copied())} }
+  [1m[94m|[0m [1m[94m------------[0m          [1m[33m^^^^^[0m
+  [1m[94m|[0m [1m[94m|[0m
+  [1m[94m|[0m [1m[94mmethod in this implementation[0m
+  [1m[94m|[0m
+  [1m[94m= [0m[1mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
-[1m[91merror[0m: could not compile `economics-radar` (bin "EconomicsRadar") due to 1 previous error
-RULE_EXIT=101
+[1m[33mwarning[0m[1m: function `cmp` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:7:4
+  [1m[94m|[0m
+[1m[94m7[0m [1m[94m|[0m fn cmp(lhs:f64,op:&str,rhs:f64)->bool{match op{">"=>lhs>rhs,">="=>lhs>=rhs,"<"=>lhs<rhs,"<="=>lhs<=rhs,"=="=> (lhs-rhs).abs()<f64::EP[1m[94m...[0m
+  [1m[94m|[0m    [1m[33m^^^[0m
+
+[1m[33mwarning[0m[1m: function `eval` is never used[0m
+ [1m[94m--> [0msrc/dsl.rs:9:8
+  [1m[94m|[0m
+[1m[94m9[0m [1m[94m|[0m pub fn eval(expr:&str,ctx:&Context)->bool {
+  [1m[94m|[0m        [1m[33m^^^^[0m
+
+[1m[33mwarning[0m[1m: function `resolve` is never used[0m
+  [1m[94m--> [0msrc/dsl.rs:18:4
+   [1m[94m|[0m
+[1m[94m18[0m [1m[94m|[0m fn resolve(s:&str,ctx:&Context)->Option<f64>{
+   [1m[94m|[0m    [1m[33m^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: function `split_top` is never used[0m
+  [1m[94m--> [0msrc/dsl.rs:24:4
+   [1m[94m|[0m
+[1m[94m24[0m [1m[94m|[0m fn split_top<'a>(s:&'a str,needle:&str)->Option<(&'a str,&'a str)>{
+   [1m[94m|[0m    [1m[33m^^^^^^^^^[0m
+
+[1m[33mwarning[0m[1m: fields `priority` and `scope` are never read[0m
+  [1m[94m--> [0msrc/rulebook.rs:10:9
+   [1m[94m|[0m
+[1m[94m 8[0m [1m[94m|[0m pub struct RuleHit {
+   [1m[94m|[0m            [1m[94m-------[0m [1m[94mfields in this struct[0m
+[1m[94m 9[0m [1m[94m|[0m     pub id: String,
+[1m[94m10[0m [1m[94m|[0m     pub priority: String,
+   [1m[94m|[0m         [1m[33m^^^^^^^^[0m
+[1m[94m11[0m [1m[94m|[0m     pub scope: String,
+   [1m[94m|[0m         [1m[33m^^^^^[0m
+   [1m[94m|[0m
+   [1m[94m= [0m[1mnote[0m: `RuleHit` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+[1m[33mwarning[0m: `economics-radar` (bin "EconomicsRadar") generated 6 warnings
+[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 0.94s
+[1m[92m     Running[0m `target/debug/EconomicsRadar rulebook`
+rules=27494 families=85 mode=procedural-v4-ultra low_memory=true
+RULE_EXIT=0
