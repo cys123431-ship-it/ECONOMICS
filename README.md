@@ -1,8 +1,8 @@
 # ECONOMICS Radar
 
-시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.3.1은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
+시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.3.2는 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
 
-## v0.3.1에서 보장하는 것
+## v0.3.2에서 보장하는 것
 
 - 정규 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
 - 85개 규칙군, 27,494개 규칙, 중복 ID 0개, 구문 구조 오류 0개를 시작 시 검증
@@ -11,7 +11,7 @@
 - stress / vulnerability / resilience를 독립 계산하고, 표본 또는 신뢰도가 부족하면 `null` 반환
 - 동일 날짜의 데이터 개정본을 보존하고 `released_at` 기준 as-of 조회로 미래정보 유입 방지
 - 중복 계열은 같은 redundancy group 안에서 먼저 합산하여 위험을 이중 계상하지 않음
-- FRED/ALFRED, Treasury FiscalData, BOK ECOS, 승인된 KRX JSON API, Binance Futures 공개 API 및 설정형 공식 JSON 어댑터
+- FRED 현재치와 빈티지 날짜를 분할 조회하는 ALFRED 최초발표치, Treasury FiscalData, BOK ECOS, 승인된 KRX JSON API, Binance Futures 공개 API 및 설정형 공식 JSON 어댑터
 - API 키·URL의 비밀값은 출력하지 않고 수집 오류는 비밀값을 가린 뒤 비정상 종료
 
 상세 구현 추적표는 [docs/IMPLEMENTATION_AUDIT.md](docs/IMPLEMENTATION_AUDIT.md)에 있습니다.
@@ -61,8 +61,8 @@ KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그�
 ```text
 keys
 rulebook
-collect-fred [start]
-collect-alfred [start]
+collect-fred [start] [series]
+collect-alfred [start] [series]
 collect-public
 collect-ecos
 collect-krx
@@ -75,6 +75,8 @@ demo
 ```
 
 `run 2025-12-31`처럼 날짜 또는 RFC3339 시각을 넘기면 그 시점에 발표된 데이터만 사용합니다. `backtest`도 같은 기준을 사용하며, 실수로 과도한 실행을 하지 않도록 기본 최대 관측일 수를 5,000개로 제한합니다.
+
+FRED/ALFRED의 마지막 `series`는 선택사항입니다. 예를 들어 `collect-alfred 2000-01-01 ANFCI`는 해당 계열만 재수집합니다.
 
 서버 기본 주소는 `http://127.0.0.1:8765`입니다. 엔드포인트는 `/`, `/api/snapshot`, `/health`이며 로컬 바인딩이 기본값입니다.
 

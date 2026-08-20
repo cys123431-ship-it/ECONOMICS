@@ -6,7 +6,7 @@ use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, error::Error, fs, time::Duration};
+use std::{collections::BTreeMap, error::Error, fs, thread, time::Duration};
 
 type AuctionValues = (f64, Option<f64>, Option<f64>, Option<f64>);
 
@@ -82,77 +82,207 @@ const FRED_SERIES: &[&str] = &[
     "CHNLOLITOAASTSAM",
 ];
 
+const FRED_VINTAGE_PAGE_SIZE: usize = 10_000;
+const FRED_VINTAGE_WINDOW_SIZE: usize = 100;
+const FRED_REQUEST_ATTEMPTS: usize = 3;
+
+fn fred_vintage_windows(dates: &[String]) -> Vec<(String, String)> {
+    dates
+        .chunks(FRED_VINTAGE_WINDOW_SIZE)
+        .filter_map(|chunk| Some((chunk.first()?.clone(), chunk.last()?.clone())))
+        .collect()
+}
+
+fn fred_json(
+    http: &Client,
+    endpoint: &str,
+    query: &[(&str, String)],
+    key: &str,
+) -> Result<Value, String> {
+    for attempt in 0..FRED_REQUEST_ATTEMPTS {
+        match http.get(endpoint).query(query).send() {
+            Ok(response) if response.status().is_success() => {
+                return response.json().map_err(|error| error.to_string());
+            }
+            Ok(response) => {
+                let status = response.status();
+                let retryable = status.is_server_error() || status.as_u16() == 429;
+                let error = response
+                    .error_for_status()
+                    .expect_err("non-success FRED response must have an HTTP error");
+                if !retryable || attempt + 1 == FRED_REQUEST_ATTEMPTS {
+                    return Err(redact_url_error(error.to_string(), key));
+                }
+            }
+            Err(error) => {
+                if attempt + 1 == FRED_REQUEST_ATTEMPTS {
+                    return Err(redact_url_error(error.to_string(), key));
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
+    }
+    Err("FRED request exhausted retries".into())
+}
+
+fn fred_revision_id(initial_release: bool, released_at: Option<&str>, value: f64) -> String {
+    if initial_release {
+        released_at
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("initial:{value:.17}"))
+    } else {
+        format!("current:{value:.17}")
+    }
+}
+
+fn fred_vintage_dates(
+    http: &Client,
+    key: &str,
+    series: &str,
+    start: &str,
+) -> Result<Vec<String>, String> {
+    let mut dates = Vec::new();
+    let mut offset = 0usize;
+    loop {
+        let query = [
+            ("series_id", series.to_string()),
+            ("api_key", key.to_string()),
+            ("file_type", "json".to_string()),
+            ("realtime_start", start.to_string()),
+            ("realtime_end", Utc::now().date_naive().to_string()),
+            ("limit", FRED_VINTAGE_PAGE_SIZE.to_string()),
+            ("offset", offset.to_string()),
+        ];
+        let value = fred_json(
+            http,
+            "https://api.stlouisfed.org/fred/series/vintagedates",
+            &query,
+            key,
+        )?;
+        let page = value
+            .get("vintage_dates")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "vintage_dates missing in response".to_string())?;
+        let page_dates = page
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let page_len = page_dates.len();
+        dates.extend(page_dates);
+        let count = value
+            .get("count")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(offset + page_len);
+        offset += page_len;
+        if page_len == 0 || offset >= count {
+            break;
+        }
+    }
+    Ok(dates)
+}
+
 pub fn collect_fred(
     config: &Config,
     db: &Db,
     start: &str,
     initial_release: bool,
+    series_filter: Option<&str>,
 ) -> Result<CollectionReport, Box<dyn Error>> {
     let key = config.fred_api_key.as_ref().ok_or("FRED_API_KEY missing")?;
+    if let Some(series) = series_filter {
+        if !FRED_SERIES.contains(&series) {
+            return Err(format!("unknown FRED series: {series}").into());
+        }
+    }
     let http = client(config)?;
     let mut report = CollectionReport::default();
 
-    for series in FRED_SERIES {
-        let mut url = format!(
-            "https://api.stlouisfed.org/fred/series/observations?series_id={}&api_key={}&file_type=json&observation_start={}&limit=100000",
-            urlencoding::encode(series),
-            urlencoding::encode(key),
-            urlencoding::encode(start)
-        );
-        if initial_release {
-            url.push_str("&output_type=4");
-        }
-        let response = http
-            .get(&url)
-            .send()
-            .and_then(|response| response.error_for_status());
-        let response = match response {
-            Ok(response) => response,
-            Err(error) => {
-                report.error(series, redact_url_error(error.to_string(), key));
-                continue;
+    for series in FRED_SERIES
+        .iter()
+        .copied()
+        .filter(|series| series_filter.is_none_or(|filter| *series == filter))
+    {
+        let windows = if initial_release {
+            match fred_vintage_dates(&http, key, series, start) {
+                Ok(dates) => fred_vintage_windows(&dates),
+                Err(error) => {
+                    report.error(series, error);
+                    continue;
+                }
             }
+        } else {
+            Vec::new()
         };
-        let value: Value = match response.json() {
-            Ok(value) => value,
-            Err(error) => {
-                report.error(series, error);
-                continue;
+        let request_windows = if initial_release {
+            windows
+        } else {
+            vec![(String::new(), String::new())]
+        };
+
+        for (realtime_start, realtime_end) in request_windows {
+            let mut query = vec![
+                ("series_id", series.to_string()),
+                ("api_key", key.to_string()),
+                ("file_type", "json".to_string()),
+                ("observation_start", start.to_string()),
+                ("limit", "100000".to_string()),
+            ];
+            if initial_release {
+                query.extend([
+                    ("output_type", "4".to_string()),
+                    ("realtime_start", realtime_start),
+                    ("realtime_end", realtime_end),
+                ]);
             }
-        };
-        let Some(observations) = value.get("observations").and_then(Value::as_array) else {
-            report.error(series, "observations missing in response");
-            continue;
-        };
-        for observation in observations {
-            let Some(date) = observation.get("date").and_then(Value::as_str) else {
+            let value = match fred_json(
+                &http,
+                "https://api.stlouisfed.org/fred/series/observations",
+                &query,
+                key,
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    report.error(series, error);
+                    continue;
+                }
+            };
+            let Some(observations) = value.get("observations").and_then(Value::as_array) else {
+                report.error(series, "observations missing in response");
                 continue;
             };
-            let Some(number) = parse_number(observation.get("value")) else {
-                continue;
-            };
-            let released_at = observation
-                .get("realtime_start")
-                .and_then(Value::as_str)
-                .map(date_to_end_of_day);
-            let source_asof = observation
-                .get("realtime_end")
-                .and_then(Value::as_str)
-                .map(date_to_end_of_day);
-            let revision_id = released_at
-                .clone()
-                .unwrap_or_else(|| format!("value:{number:.17}"));
-            report.record(db.put(&NewObservation {
-                source: if initial_release { "alfred" } else { "fred" }.into(),
-                series: (*series).into(),
-                entity: String::new(),
-                observed_at: date.into(),
-                value: number,
-                released_at,
-                source_asof,
-                revision_id: Some(revision_id),
-                metadata: json!({"initial_release": initial_release}),
-            }));
+            for observation in observations {
+                let Some(date) = observation.get("date").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(number) = parse_number(observation.get("value")) else {
+                    continue;
+                };
+                let released_at = initial_release.then(|| {
+                    observation
+                        .get("realtime_start")
+                        .and_then(Value::as_str)
+                        .map(date_to_end_of_day)
+                });
+                let released_at = released_at.flatten();
+                let source_asof = observation
+                    .get("realtime_end")
+                    .and_then(Value::as_str)
+                    .map(date_to_end_of_day);
+                let revision_id = fred_revision_id(initial_release, released_at.as_deref(), number);
+                report.record(db.put(&NewObservation {
+                    source: if initial_release { "alfred" } else { "fred" }.into(),
+                    series: series.into(),
+                    entity: String::new(),
+                    observed_at: date.into(),
+                    value: number,
+                    released_at,
+                    source_asof,
+                    revision_id: Some(revision_id),
+                    metadata: json!({"initial_release": initial_release}),
+                }));
+            }
         }
     }
     Ok(report)
@@ -991,6 +1121,29 @@ mod tests {
     fn nested_row_arrays_are_discovered() {
         let value = json!({"response":{"data":[{"DATE":"20260820","BASIS":"1.2"}]}});
         assert_eq!(find_object_rows(&value).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fred_vintage_windows_stay_below_api_limit_without_overlap() {
+        let dates = (0..FRED_VINTAGE_WINDOW_SIZE + 1)
+            .map(|index| format!("vintage-{index:04}"))
+            .collect::<Vec<_>>();
+        let windows = fred_vintage_windows(&dates);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0], ("vintage-0000".into(), "vintage-0099".into()));
+        assert_eq!(windows[1], ("vintage-0100".into(), "vintage-0100".into()));
+    }
+
+    #[test]
+    fn fred_current_and_alfred_initial_revisions_have_distinct_ids() {
+        assert_eq!(
+            fred_revision_id(false, Some("2026-08-20T23:59:59Z"), 1.25),
+            "current:1.25000000000000000"
+        );
+        assert_eq!(
+            fred_revision_id(true, Some("2020-01-02T23:59:59Z"), 1.25),
+            "2020-01-02T23:59:59Z"
+        );
     }
 
     #[test]

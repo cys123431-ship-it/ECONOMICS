@@ -14,12 +14,12 @@ use std::{error::Error, io};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.3.1\n\
+        "EconomicsRadar 0.3.2\n\
          commands:\n\
            keys\n\
            rulebook\n\
-           collect-fred [start]\n\
-           collect-alfred [start]\n\
+           collect-fred [start] [series]\n\
+           collect-alfred [start] [series]\n\
            collect-public\n\
            collect-ecos\n\
            collect-krx\n\
@@ -95,8 +95,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let start = std::env::args()
                 .nth(2)
                 .unwrap_or_else(|| "2000-01-01".into());
-            let report =
-                collectors::collect_fred(&config, &db, &start, command == "collect-alfred")?;
+            let series = std::env::args().nth(3);
+            let report = collectors::collect_fred(
+                &config,
+                &db,
+                &start,
+                command == "collect-alfred",
+                series.as_deref(),
+            )?;
             print_report(&report)?;
         }
         "collect-official" => {
@@ -121,8 +127,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let start = std::env::args()
                 .nth(2)
                 .unwrap_or_else(|| "2000-01-01".into());
-            let mut report = collectors::collect_fred(&config, &db, &start, false)?;
-            report.merge(collectors::collect_fred(&config, &db, &start, true)?);
+            let mut report = collectors::collect_fred(&config, &db, &start, false, None)?;
+            report.merge(collectors::collect_fred(&config, &db, &start, true, None)?);
             report.merge(collect_official(&config, &db)?);
             print_report(&report)?;
         }
