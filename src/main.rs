@@ -14,14 +14,14 @@ use std::{error::Error, io};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.3.2\n\
+        "EconomicsRadar 0.3.3\n\
          commands:\n\
            keys\n\
            rulebook\n\
            collect-fred [start] [series]\n\
            collect-alfred [start] [series]\n\
            collect-public\n\
-           collect-ecos\n\
+           collect-ecos [series]\n\
            collect-krx\n\
            collect-official\n\
            collect-all [start]\n\
@@ -61,7 +61,7 @@ fn collect_public(config: &Config, db: &Db) -> CollectionReport {
 fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
     let mut report = collect_public(config, db);
     if config.ecos_api_key.is_some() {
-        match collectors::collect_ecos(config, db) {
+        match collectors::collect_ecos(config, db, None) {
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("ecos: {error}")),
         }
@@ -116,7 +116,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         "collect-ecos" => {
             let db = Db::open(&config.db_path)?;
-            print_report(&collectors::collect_ecos(&config, &db)?)?;
+            let series = std::env::args().nth(2);
+            print_report(&collectors::collect_ecos(&config, &db, series.as_deref())?)?;
         }
         "collect-krx" => {
             let db = Db::open(&config.db_path)?;

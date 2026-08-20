@@ -93,7 +93,7 @@ fn fred_vintage_windows(dates: &[String]) -> Vec<(String, String)> {
         .collect()
 }
 
-fn fred_json(
+fn request_json(
     http: &Client,
     endpoint: &str,
     query: &[(&str, String)],
@@ -101,9 +101,13 @@ fn fred_json(
 ) -> Result<Value, String> {
     for attempt in 0..FRED_REQUEST_ATTEMPTS {
         match http.get(endpoint).query(query).send() {
-            Ok(response) if response.status().is_success() => {
-                return response.json().map_err(|error| error.to_string());
-            }
+            Ok(response) if response.status().is_success() => match response.json() {
+                Ok(value) => return Ok(value),
+                Err(error) if attempt + 1 == FRED_REQUEST_ATTEMPTS => {
+                    return Err(error.to_string());
+                }
+                Err(_) => {}
+            },
             Ok(response) => {
                 let status = response.status();
                 let retryable = status.is_server_error() || status.as_u16() == 429;
@@ -122,7 +126,7 @@ fn fred_json(
         }
         thread::sleep(Duration::from_millis(500 * (attempt as u64 + 1)));
     }
-    Err("FRED request exhausted retries".into())
+    Err("JSON request exhausted retries".into())
 }
 
 fn fred_revision_id(initial_release: bool, released_at: Option<&str>, value: f64) -> String {
@@ -153,7 +157,7 @@ fn fred_vintage_dates(
             ("limit", FRED_VINTAGE_PAGE_SIZE.to_string()),
             ("offset", offset.to_string()),
         ];
-        let value = fred_json(
+        let value = request_json(
             http,
             "https://api.stlouisfed.org/fred/series/vintagedates",
             &query,
@@ -236,7 +240,7 @@ pub fn collect_fred(
                     ("realtime_end", realtime_end),
                 ]);
             }
-            let value = match fred_json(
+            let value = match request_json(
                 &http,
                 "https://api.stlouisfed.org/fred/series/observations",
                 &query,
@@ -525,14 +529,29 @@ fn store_binance_array(
     }
 }
 
-pub fn collect_ecos(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
+const ECOS_SERIES: &[(&str, &str, &str)] = &[
+    ("KR_BASE_RATE", "722Y001", "0101000"),
+    ("KR_USD_KRW", "731Y001", "0000001"),
+];
+
+pub fn collect_ecos(
+    config: &Config,
+    db: &Db,
+    series_filter: Option<&str>,
+) -> Result<CollectionReport, Box<dyn Error>> {
     let key = config.ecos_api_key.as_ref().ok_or("ECOS_API_KEY missing")?;
+    if let Some(series) = series_filter {
+        if !ECOS_SERIES.iter().any(|definition| definition.0 == series) {
+            return Err(format!("unknown ECOS series: {series}").into());
+        }
+    }
     let http = client(config)?;
     let mut report = CollectionReport::default();
-    for (series, stat, item) in [
-        ("KR_BASE_RATE", "722Y001", "0101000"),
-        ("KR_USD_KRW", "731Y001", "0000001"),
-    ] {
+    for (series, stat, item) in ECOS_SERIES
+        .iter()
+        .copied()
+        .filter(|definition| series_filter.is_none_or(|filter| definition.0 == filter))
+    {
         let end = Utc::now().format("%Y%m%d").to_string();
         let page_size = 1_000usize;
         let mut start_row = 1usize;
@@ -544,16 +563,10 @@ pub fn collect_ecos(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
                 "https://ecos.bok.or.kr/api/StatisticSearch/{}/json/kr/{}/{}/{}/D/20000101/{}/{}",
                 urlencoding::encode(key), start_row, end_row, stat, end, item
             );
-            let value: Value = match http.get(&url).send().and_then(|r| r.error_for_status()) {
-                Ok(response) => match response.json() {
-                    Ok(value) => value,
-                    Err(error) => {
-                        report.error(series, error);
-                        break;
-                    }
-                },
+            let value = match request_json(&http, &url, &[], key) {
+                Ok(value) => value,
                 Err(error) => {
-                    report.error(series, redact_url_error(error.to_string(), key));
+                    report.error(series, error);
                     break;
                 }
             };
@@ -615,60 +628,89 @@ struct KrxService {
     name: &'static str,
     api_id: &'static str,
     path: &'static str,
+    primary_series: &'static str,
     kind: KrxKind,
 }
+
+const KRX_INCREMENTAL_OVERLAP_DAYS: i64 = 7;
 
 const KRX_SERVICES: &[KrxService] = &[
     KrxService {
         name: "KOSPI 시리즈 일별시세정보",
         api_id: "kospi_dd_trd",
         path: "idx/kospi_dd_trd",
+        primary_series: "KRX_KOSPI_CLOSE",
         kind: KrxKind::Index("KOSPI"),
     },
     KrxService {
         name: "KOSDAQ 시리즈 일별시세정보",
         api_id: "kosdaq_dd_trd",
         path: "idx/kosdaq_dd_trd",
+        primary_series: "KRX_KOSDAQ_CLOSE",
         kind: KrxKind::Index("KOSDAQ"),
     },
     KrxService {
         name: "유가증권 일별매매정보",
         api_id: "stk_bydd_trd",
         path: "sto/stk_bydd_trd",
+        primary_series: "KRX_KOSPI_BREADTH",
         kind: KrxKind::Breadth("KOSPI"),
     },
     KrxService {
         name: "코스닥 일별매매정보",
         api_id: "ksq_bydd_trd",
         path: "sto/ksq_bydd_trd",
+        primary_series: "KRX_KOSDAQ_BREADTH",
         kind: KrxKind::Breadth("KOSDAQ"),
     },
     KrxService {
         name: "선물 일별매매정보 (주식선물外)",
         api_id: "fut_bydd_trd",
         path: "drv/fut_bydd_trd",
+        primary_series: "KRX_FUTURES_OI",
         kind: KrxKind::Futures,
     },
     KrxService {
         name: "옵션 일별매매정보 (주식옵션外)",
         api_id: "opt_bydd_trd",
         path: "drv/opt_bydd_trd",
+        primary_series: "KRX_PUT_CALL_RATIO",
         kind: KrxKind::Options,
     },
 ];
+
+fn krx_query_dates(
+    db: &Db,
+    primary_series: &str,
+    today: NaiveDate,
+    initial_lookback_days: usize,
+) -> rusqlite::Result<Vec<NaiveDate>> {
+    let end = today - ChronoDuration::days(2);
+    let latest = db
+        .latest("krx", primary_series, None)?
+        .and_then(|point| point.observed_at.get(..10).map(str::to_string))
+        .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok());
+    let start = latest
+        .map(|date| date - ChronoDuration::days(KRX_INCREMENTAL_OVERLAP_DAYS))
+        .unwrap_or_else(|| today - ChronoDuration::days(initial_lookback_days as i64));
+    let span = (end - start).num_days();
+    if span < 0 {
+        return Ok(Vec::new());
+    }
+    Ok((0..=span)
+        .map(|offset| start + ChronoDuration::days(offset))
+        .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+        .collect())
+}
 
 pub fn collect_krx(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
     let key = config.krx_api_key.as_ref().ok_or("KRX_API_KEY missing")?;
     let http = client(config)?;
     let mut report = CollectionReport::default();
     let today = Utc::now().date_naive();
-    let dates = (2..=config.krx_lookback_days + 2)
-        .rev()
-        .map(|offset| today - ChronoDuration::days(offset as i64))
-        .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
-        .collect::<Vec<_>>();
 
     for service in KRX_SERVICES {
+        let dates = krx_query_dates(db, service.primary_series, today, config.krx_lookback_days)?;
         let mut recognized = 0usize;
         for date in &dates {
             let response = match http
@@ -834,7 +876,9 @@ fn store_krx_futures(
     let open_interest = rows
         .iter()
         .filter_map(|row| {
-            parse_number(row.get("OPNINT_QTY")).or_else(|| parse_number(row.get("OPEN_INT")))
+            parse_number(row.get("ACC_OPNINT_QTY"))
+                .or_else(|| parse_number(row.get("OPNINT_QTY")))
+                .or_else(|| parse_number(row.get("OPEN_INT")))
         })
         .sum::<f64>();
     if open_interest <= 0.0 {
@@ -1163,6 +1207,41 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(point.value, 50.0);
+    }
+
+    #[test]
+    fn krx_existing_series_uses_short_incremental_overlap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let latest = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        store_krx_value(
+            &db,
+            &mut report,
+            "KRX_FUTURES_OI",
+            latest,
+            123.0,
+            Value::Null,
+        );
+        let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let dates = krx_query_dates(&db, "KRX_FUTURES_OI", today, 60).unwrap();
+        assert_eq!(dates.first().copied(), NaiveDate::from_ymd_opt(2026, 8, 11));
+        assert_eq!(dates.last().copied(), Some(latest));
+    }
+
+    #[test]
+    fn krx_futures_rows_use_accumulated_open_interest_field() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let rows = vec![
+            json!({"ACC_OPNINT_QTY":"100"}),
+            json!({"ACC_OPNINT_QTY":"250"}),
+        ];
+        let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
+        assert_eq!(store_krx_futures(&db, &mut report, date, &rows), 1);
+        let point = db.latest("krx", "KRX_FUTURES_OI", None).unwrap().unwrap();
+        assert_eq!(point.value, 350.0);
     }
 
     #[test]
