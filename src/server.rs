@@ -7,8 +7,17 @@ use std::{
 };
 
 pub fn serve(host: &str, db_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    serve_with_ready(host, db_path, || {})
+}
+
+pub fn serve_with_ready(
+    host: &str,
+    db_path: PathBuf,
+    on_ready: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(host)?;
     println!("ECONOMICS Radar: http://{host}");
+    on_ready();
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {

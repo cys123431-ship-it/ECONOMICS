@@ -10,12 +10,13 @@ mod server;
 use collectors::CollectionReport;
 use config::Config;
 use db::{Db, NewObservation};
-use std::{error::Error, io};
+use std::{error::Error, io, process::Command, time::Duration};
 
 fn usage() {
     println!(
-        "EconomicsRadar 0.4.0\n\
+        "EconomicsRadar {}\n\
          commands:\n\
+           launch\n\
            keys\n\
            rulebook\n\
            collect-fred [start] [series]\n\
@@ -28,8 +29,61 @@ fn usage() {
            run [as-of]\n\
            backtest <start> <end> [max-points]\n\
            serve\n\
-           demo"
+           demo",
+        env!("CARGO_PKG_VERSION")
     );
+}
+
+fn dashboard_url(host: &str) -> String {
+    let browser_host = host
+        .strip_prefix("0.0.0.0:")
+        .map(|port| format!("127.0.0.1:{port}"))
+        .or_else(|| {
+            host.strip_prefix("[::]:")
+                .map(|port| format!("127.0.0.1:{port}"))
+        })
+        .unwrap_or_else(|| host.to_string());
+    format!("http://{browser_host}/")
+}
+
+fn dashboard_is_running(url: &str) -> bool {
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+    else {
+        return false;
+    };
+    client
+        .get(format!("{url}health"))
+        .send()
+        .ok()
+        .filter(|response| response.status().is_success())
+        .and_then(|response| response.json::<serde_json::Value>().ok())
+        .and_then(|body| {
+            body.get("status")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .is_some_and(|status| status == "ok")
+}
+
+#[cfg(target_os = "windows")]
+fn open_dashboard(url: &str) -> io::Result<()> {
+    Command::new("rundll32.exe")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+}
+
+#[cfg(target_os = "macos")]
+fn open_dashboard(url: &str) -> io::Result<()> {
+    Command::new("open").arg(url).spawn().map(|_| ())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_dashboard(url: &str) -> io::Result<()> {
+    Command::new("xdg-open").arg(url).spawn().map(|_| ())
 }
 
 fn print_report(report: &CollectionReport) -> Result<(), Box<dyn Error>> {
@@ -83,8 +137,22 @@ fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
 
 fn main() -> Result<(), Box<dyn Error>> {
     let config = Config::load();
-    let command = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
+    let command = std::env::args().nth(1).unwrap_or_else(|| "launch".into());
     match command.as_str() {
+        "launch" => {
+            rulebook::verify(&config.rulebook_path)?;
+            let url = dashboard_url(&config.host);
+            if dashboard_is_running(&url) {
+                open_dashboard(&url)?;
+            } else {
+                let browser_url = url.clone();
+                server::serve_with_ready(&config.host, config.db_path.clone(), move || {
+                    if let Err(error) = open_dashboard(&browser_url) {
+                        eprintln!("could not open dashboard browser: {error}");
+                    }
+                })?;
+            }
+        }
         "keys" => config.print_key_status(),
         "rulebook" => {
             let verification = rulebook::verify(&config.rulebook_path)?;
@@ -209,4 +277,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dashboard_url_uses_loopback_for_wildcard_bindings() {
+        assert_eq!(dashboard_url("127.0.0.1:8765"), "http://127.0.0.1:8765/");
+        assert_eq!(dashboard_url("0.0.0.0:9000"), "http://127.0.0.1:9000/");
+        assert_eq!(dashboard_url("[::]:7000"), "http://127.0.0.1:7000/");
+    }
 }

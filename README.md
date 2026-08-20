@@ -1,8 +1,8 @@
 # ECONOMICS Radar
 
-시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.4.0은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
+시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.4.1은 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
 
-## v0.4.0에서 보장하는 것
+## v0.4.1에서 보장하는 것
 
 - 정규 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
 - 85개 규칙군, 27,494개 규칙, 중복 ID 0개, 구문 구조 오류 0개를 시작 시 검증
@@ -24,6 +24,7 @@ Release의 `EconomicsRadar-Windows-x64.zip`을 별도 폴더에 풀고 PowerShel
 Copy-Item .env.example .env
 .\EconomicsRadar.exe keys
 .\EconomicsRadar.exe rulebook
+.\EconomicsRadar.exe launch
 .\EconomicsRadar.exe collect-official
 .\EconomicsRadar.exe run
 .\EconomicsRadar.exe serve
@@ -36,7 +37,7 @@ Copy-Item .env.example .env
 - `KRX_API_KEY`: KRX 인증키. 사용할 KRX 서비스는 별도 활용승인이 필요하며 URL은 프로그램에 내장됩니다.
 - `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 공식 JSON 응답의 필드 매핑 파일
 
-KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 공식 URL을 내장합니다. v0.4.0은 KRX가 제공하는 아래 31개 승인 서비스를 모두 수집합니다. 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
+KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 공식 URL을 내장합니다. v0.4.1은 KRX가 제공하는 아래 31개 승인 서비스를 모두 수집합니다. 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
 
 - 지수: KRX·KOSPI·KOSDAQ 시리즈 일별시세, 채권지수 시세, 파생상품지수 시세
 - 주식: 유가증권·코스닥·코넥스 일별매매, 신주인수권증권·신주인수권증서 일별매매, 유가증권·코스닥·코넥스 종목기본정보
@@ -61,6 +62,7 @@ KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그�
 ## 명령
 
 ```text
+launch
 keys
 rulebook
 collect-fred [start] [series]
@@ -75,6 +77,8 @@ backtest <start> <end> [max-points]
 serve
 demo
 ```
+
+`launch`는 로컬 서버가 없으면 시작한 뒤 기본 브라우저로 대시보드를 열고, 이미 실행 중이면 기존 서버를 재사용해 브라우저만 엽니다. 인자 없이 `EconomicsRadar.exe`를 실행해도 `launch`와 동일하게 동작합니다. `serve`는 브라우저를 열지 않는 서버 전용 명령입니다.
 
 `run 2025-12-31`처럼 날짜 또는 RFC3339 시각을 넘기면 그 시점에 발표된 데이터만 사용합니다. `backtest`도 같은 기준을 사용하며, 실수로 과도한 실행을 하지 않도록 기본 최대 관측일 수를 5,000개로 제한합니다.
 
