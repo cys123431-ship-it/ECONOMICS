@@ -1,0 +1,3 @@
+{"assets":[{"apiUrl":"https://api.github.com/repos/cys123431-ship-it/ECONOMICS/releases/assets/522025827","contentType":"application/zip","createdAt":"2026-08-20T09:18:50Z","digest":"sha256:b96d265e2fa792f0774a5ffe7f991fa5501bc48f9b28ea3b59b0b316b07b01c0","downloadCount":0,"id":"RA_kwDOT-DnYM4fHXtj","label":"","name":"EconomicsRadar-Windows-x64.zip","size":2592018,"state":"uploaded","updatedAt":"2026-08-20T09:18:51Z","url":"https://github.com/cys123431-ship-it/ECONOMICS/releases/download/v0.2.0/EconomicsRadar-Windows-x64.zip"}],"isDraft":false,"isPrerelease":false,"name":"ECONOMICS Radar v0.2.0","tagName":"v0.2.0","url":"https://github.com/cys123431-ship-it/ECONOMICS/releases/tag/v0.2.0"}
+
+exit_code=0
