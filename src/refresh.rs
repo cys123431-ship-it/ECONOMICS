@@ -11,6 +11,40 @@ use std::{
 };
 
 const INCREMENTAL_LOOKBACK_DAYS: i64 = 120;
+const FRED_CURRENT_SERIES: &[&str] = &[
+    "WEI",
+    "CFNAI",
+    "SAHMREALTIME",
+    "ICSA",
+    "CCSA",
+    "STLFSI4",
+    "NFCI",
+    "ANFCI",
+    "NFCILEVERAGE",
+    "BAMLH0A0HYM2",
+    "BAMLC0A0CM",
+    "T10Y2Y",
+    "T10Y3M",
+    "VIXCLS",
+    "SP500",
+    "NASDAQCOM",
+    "DJIA",
+    "DGS10",
+    "DGS2",
+    "WALCL",
+    "RRPONTSYD",
+    "TOTRESNS",
+    "WRESBAL",
+    "DEXKOUS",
+    "DTWEXBGS",
+    "MORTGAGE30US",
+    "DRCCLACBS",
+    "DRCLACBS",
+    "BUSLOANS",
+    "TOTLL",
+    "KORLOLITOAASTSAM",
+    "CHNLOLITOAASTSAM",
+];
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,9 +114,9 @@ fn refresh_loop(
     receiver: Receiver<RefreshMode>,
     status: Arc<Mutex<RefreshStatus>>,
 ) {
-    let crypto_interval = Duration::from_secs(config.crypto_refresh_seconds);
+    let crypto_interval = Duration::from_secs(config.crypto_refresh_seconds());
     let market_interval = Duration::from_secs(config.refresh_minutes.saturating_mul(60));
-    let macro_interval = Duration::from_secs(config.macro_refresh_minutes.saturating_mul(60));
+    let macro_interval = Duration::from_secs(config.macro_refresh_minutes().saturating_mul(60));
     let full_interval = Duration::from_secs(config.full_refresh_hours.saturating_mul(3_600));
 
     run_cycle(&config, RefreshMode::Full, true, true, &status);
@@ -105,8 +139,7 @@ fn refresh_loop(
             continue;
         }
 
-        let full_due = last_full.elapsed() >= full_interval;
-        if full_due {
+        if last_full.elapsed() >= full_interval {
             run_cycle(&config, RefreshMode::Full, true, true, &status);
             last_market = Instant::now();
             last_macro = Instant::now();
@@ -116,13 +149,7 @@ fn refresh_loop(
 
         let market_due = last_market.elapsed() >= market_interval;
         let macro_due = last_macro.elapsed() >= macro_interval;
-        run_cycle(
-            &config,
-            RefreshMode::Fast,
-            market_due,
-            macro_due,
-            &status,
-        );
+        run_cycle(&config, RefreshMode::Fast, market_due, macro_due, &status);
         if market_due {
             last_market = Instant::now();
         }
@@ -171,6 +198,17 @@ struct RefreshOutcome {
     snapshot_as_of: String,
 }
 
+fn collect_current_fred(config: &Config, db: &Db, start: &str) -> collectors::CollectionReport {
+    let mut report = collectors::CollectionReport::default();
+    for series in FRED_CURRENT_SERIES {
+        match collectors::collect_fred(config, db, start, false, Some(series)) {
+            Ok(collected) => report.merge(collected),
+            Err(error) => report.errors.push(format!("{series}: {error}")),
+        }
+    }
+    report
+}
+
 fn collect_and_calculate(
     config: &Config,
     mode: RefreshMode,
@@ -182,7 +220,6 @@ fn collect_and_calculate(
         (Utc::now().date_naive() - ChronoDuration::days(INCREMENTAL_LOOKBACK_DAYS)).to_string();
     let mut report = collectors::CollectionReport::default();
 
-    // Binance public market data is lightweight and is refreshed on every short tick.
     merge_result(
         &mut report,
         "binance",
@@ -191,11 +228,7 @@ fn collect_and_calculate(
 
     if market_due || matches!(mode, RefreshMode::Full) {
         if config.fred_api_key.is_some() {
-            merge_result(
-                &mut report,
-                "fred",
-                collectors::collect_fred(config, &db, &start, false, None),
-            );
+            report.merge(collect_current_fred(config, &db, &start));
         }
         merge_result(
             &mut report,
@@ -211,14 +244,12 @@ fn collect_and_calculate(
         }
     }
 
-    if macro_due || matches!(mode, RefreshMode::Full) {
-        if config.ecos_api_key.is_some() {
-            merge_result(
-                &mut report,
-                "ecos",
-                collectors::collect_ecos(config, &db, None),
-            );
-        }
+    if (macro_due || matches!(mode, RefreshMode::Full)) && config.ecos_api_key.is_some() {
+        merge_result(
+            &mut report,
+            "ecos",
+            collectors::collect_ecos(config, &db, None),
+        );
     }
 
     if matches!(mode, RefreshMode::Full) {
@@ -228,8 +259,6 @@ fn collect_and_calculate(
                 "krx history",
                 collectors::collect_krx(config, &db, None),
             );
-            // The historical collector intentionally backfills broad daily data. Query the
-            // newest KRX dates again afterwards so an older backfill can never be the visible quote.
             merge_result(
                 &mut report,
                 "krx latest",
@@ -291,5 +320,10 @@ mod tests {
         assert_eq!(json["running"], true);
         assert_eq!(json["mode"], "full");
         assert_eq!(json["stored"], 2);
+    }
+
+    #[test]
+    fn discontinued_eqta_is_not_polled_by_live_refresh() {
+        assert!(!FRED_CURRENT_SERIES.contains(&"EQTA"));
     }
 }
