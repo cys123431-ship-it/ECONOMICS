@@ -1,8 +1,20 @@
 # ECONOMICS Radar
 
-> v0.4.4: risk heatmap market grouping and explicit KRX EOD publication status.
+> v0.4.5: dashboard runtime hardening, market-specific risk labels, and versioned Windows release archive.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.4.5
+
+v0.4.5는 종합·미국·한국·코인 탭 전체 렌더링 경로를 다시 점검한 안정화 릴리스입니다.
+
+- 제거된 `NODE_LABELS` 잔존 참조를 `NODE_META` 기반 라벨로 교체
+- 한 탭의 JavaScript 예외가 다른 탭까지 중단시키지 않도록 렌더링 격리
+- 미국·한국·코인별 위험요인 이름을 시장 문맥에 맞게 명확화
+- 미국 탭에 기업부채·은행 스트레스·주택시장 요인 추가
+- API 통신 오류, 화면 렌더링 오류, 데이터 수집 오류를 분리 표시
+- 종합·미국·한국·코인 탭을 실제로 렌더링하는 Node smoke test를 Ubuntu/Windows CI와 Windows Release 빌드에 추가
+- Windows Release 파일명을 `EconomicsRadar-v0.4.5-Windows-x64.zip` 형식으로 버전 명시
 
 ## v0.4.3
 
@@ -50,7 +62,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.4.5-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
