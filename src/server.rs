@@ -66,12 +66,14 @@ fn decorate_ticker_freshness(dashboard: &mut Value) {
         let freshness = indicator
             .get("freshness")
             .and_then(Value::as_str)
-            .unwrap_or("UNKNOWN");
+            .unwrap_or("UNKNOWN")
+            .to_string();
         let date = indicator
             .get("observed_at")
             .and_then(Value::as_str)
             .and_then(|value| value.get(..10))
-            .unwrap_or("NO DATE");
+            .unwrap_or("NO DATE")
+            .to_string();
         if let Some(object) = indicator.as_object_mut() {
             object.insert(
                 "label".into(),
