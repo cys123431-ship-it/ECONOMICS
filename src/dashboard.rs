@@ -1,4 +1,5 @@
 use crate::db::{Db, Point};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::Serialize;
 
 #[derive(Clone, Copy)]
@@ -33,7 +34,9 @@ pub struct DashboardIndicator {
     pub change_pct: Option<f64>,
     pub history: Vec<f64>,
     pub observed_at: Option<String>,
+    pub ingested_at: Option<String>,
     pub source: Option<String>,
+    pub freshness: String,
     pub unit: &'static str,
     pub decimals: u8,
     pub change_period: &'static str,
@@ -490,6 +493,46 @@ pub fn build(db: &Db) -> rusqlite::Result<DashboardData> {
     Ok(DashboardData { indicators })
 }
 
+fn point_is_newer(candidate: &Point, selected: &Point) -> bool {
+    (candidate.observed_at.as_str(), candidate.ingested_at.as_str())
+        > (selected.observed_at.as_str(), selected.ingested_at.as_str())
+}
+
+fn freshness(source: Option<&str>, point: Option<&Point>) -> String {
+    let Some(point) = point else {
+        return "NO DATA".into();
+    };
+    if source.is_some_and(|source| source.eq_ignore_ascii_case("binance")) {
+        if let Ok(ingested) = DateTime::parse_from_rfc3339(&point.ingested_at) {
+            let age = Utc::now()
+                .signed_duration_since(ingested.with_timezone(&Utc))
+                .num_seconds();
+            return if age <= 120 {
+                "LIVE".into()
+            } else if age <= 600 {
+                "DELAYED".into()
+            } else {
+                format!("STALE {}m", age.max(0) / 60)
+            };
+        }
+    }
+    let date = point
+        .observed_at
+        .get(..10)
+        .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok());
+    let Some(date) = date else {
+        return "UNKNOWN".into();
+    };
+    let age = (Utc::now().date_naive() - date).num_days();
+    if age <= 0 {
+        "TODAY".into()
+    } else if age <= 3 {
+        "LATEST EOD".into()
+    } else {
+        format!("STALE {age}d")
+    }
+}
+
 fn read_indicator(
     db: &Db,
     definition: &IndicatorDefinition,
@@ -502,14 +545,21 @@ fn read_indicator(
             definition.comparison_points.max(30),
             None,
         )?;
-        if !points.is_empty() {
+        let Some(latest) = points.last() else {
+            continue;
+        };
+        let replace = selected
+            .as_ref()
+            .and_then(|(_, selected_points)| selected_points.last())
+            .is_none_or(|selected_latest| point_is_newer(latest, selected_latest));
+        if replace {
             selected = Some((*candidate, points));
-            break;
         }
     }
-    let (source, points) = selected
-        .map(|(candidate, points)| (Some(candidate.source.to_uppercase()), points))
+    let (selected_ref, points) = selected
+        .map(|(candidate, points)| (Some(candidate), points))
         .unwrap_or_default();
+    let source = selected_ref.map(|candidate| candidate.source.to_uppercase());
     let latest = points.last();
     let comparison = (points.len() >= definition.comparison_points)
         .then(|| &points[points.len() - definition.comparison_points]);
@@ -531,7 +581,9 @@ fn read_indicator(
         change_pct,
         history: points.iter().map(|point| point.value).collect(),
         observed_at: latest.map(|point| point.observed_at.clone()),
+        ingested_at: latest.map(|point| point.ingested_at.clone()),
         source,
+        freshness: freshness(selected_ref.map(|candidate| candidate.source), latest),
         unit: definition.unit,
         decimals: definition.decimals,
         change_period: definition.change_period,
@@ -577,5 +629,33 @@ mod tests {
             .unwrap();
         assert_eq!(bitcoin.value, None);
         assert_eq!(bitcoin.change, None);
+    }
+
+    #[test]
+    fn dashboard_uses_the_freshest_fallback_source() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("dashboard-fresh.db")).unwrap();
+        db.put(&NewObservation::simple(
+            "ecos",
+            "KR_USD_KRW",
+            "2026-08-18",
+            1_390.0,
+        ))
+        .unwrap();
+        db.put(&NewObservation::simple(
+            "fred",
+            "DEXKOUS",
+            "2026-08-20",
+            1_395.0,
+        ))
+        .unwrap();
+        let dashboard = build(&db).unwrap();
+        let usdkrw = dashboard
+            .indicators
+            .iter()
+            .find(|indicator| indicator.key == "usdkrw")
+            .unwrap();
+        assert_eq!(usdkrw.value, Some(1_395.0));
+        assert_eq!(usdkrw.source.as_deref(), Some("FRED"));
     }
 }
