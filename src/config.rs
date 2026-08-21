@@ -14,7 +14,9 @@ pub struct Config {
     pub min_samples: usize,
     pub http_timeout_secs: u64,
     pub krx_lookback_days: usize,
+    pub crypto_refresh_seconds: u64,
     pub refresh_minutes: u64,
+    pub macro_refresh_minutes: u64,
     pub full_refresh_hours: u64,
 }
 
@@ -113,10 +115,18 @@ impl Config {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(60)
                 .clamp(20, 365),
+            crypto_refresh_seconds: value("ECONOMICS_CRYPTO_REFRESH_SECONDS", &file)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(30)
+                .clamp(15, 300),
             refresh_minutes: value("ECONOMICS_REFRESH_MINUTES", &file)
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(15)
-                .clamp(1, 1_440),
+                .unwrap_or(5)
+                .clamp(1, 60),
+            macro_refresh_minutes: value("ECONOMICS_MACRO_REFRESH_MINUTES", &file)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(30)
+                .clamp(5, 360),
             full_refresh_hours: value("ECONOMICS_FULL_REFRESH_HOURS", &file)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(6)
@@ -133,6 +143,13 @@ impl Config {
             println!("{name}: {}", if present { "configured" } else { "missing" });
         }
         println!("rulebook: {}", self.rulebook_path.display());
+        println!(
+            "refresh: crypto={}s market={}m macro={}m full={}h",
+            self.crypto_refresh_seconds,
+            self.refresh_minutes,
+            self.macro_refresh_minutes,
+            self.full_refresh_hours
+        );
         println!(
             "official adapters: {}",
             self.official_adapters_file
