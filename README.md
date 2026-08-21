@@ -1,20 +1,50 @@
 # ECONOMICS Radar
 
-시장·거시경제 위험을 데이터 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다. v0.4.2는 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용하며, 원문의 규칙 ID·조건·우선순위·억제자·제목·메시지를 그대로 파싱합니다.
+시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
 
-## v0.4.2에서 보장하는 것
+## v0.4.3
 
-- 정규 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
-- 85개 규칙군, 27,494개 규칙, 중복 ID 0개, 구문 구조 오류 0개를 시작 시 검증
-- 조건이 계산되지 않으면 `UNKNOWN`으로 처리하여 경보를 만들지 않는 3값 논리
-- `PRIMARY`, `CONFIRMATION`, `COUNTER_SIGNAL`, `DATA_QUALITY` 채널과 우선순위·구체성·억제 규칙 적용
-- stress / vulnerability / resilience를 독립 계산하고, 표본 또는 신뢰도가 부족하면 `null` 반환
-- 동일 날짜의 데이터 개정본을 보존하고 `released_at` 기준 as-of 조회로 미래정보 유입 방지
-- 중복 계열은 같은 redundancy group 안에서 먼저 합산하여 위험을 이중 계상하지 않음
-- FRED 현재치와 빈티지 날짜를 분할 조회하는 ALFRED 최초발표치, Treasury FiscalData, BOK ECOS, 승인된 KRX JSON API, Binance Futures 공개 API 및 설정형 공식 JSON 어댑터
-- API 키·URL의 비밀값은 출력하지 않고 수집 오류는 비밀값을 가린 뒤 비정상 종료
+v0.4.3은 화면에 오래된 값을 최신 시세처럼 보여 주던 경로와 ALFRED 오류가 현재 데이터 오류처럼 섞이던 문제를 정리한 freshness 중심 릴리스입니다.
 
-상세 구현 추적표는 [docs/IMPLEMENTATION_AUDIT.md](docs/IMPLEMENTATION_AUDIT.md)에 있습니다.
+- 정규 룰북 `Market_Economy_Radar_Rulebook_v4_ULTRA.txt` 원문을 정규 입력으로 사용
+- 룰북 SHA-256 `2f2a3a189c594fdb2a581e6f052123a0dc778e8065677e88d5764f9c813b0b56`
+- 85개 규칙군 / 27,494개 규칙 / 중복 ID 0 / 구문 구조 오류 0 검증
+- `PRIMARY`, `CONFIRMATION`, `COUNTER_SIGNAL`, `DATA_QUALITY` 채널과 억제 규칙 적용
+- stress / vulnerability / resilience 독립 계산
+- 동일 날짜의 데이터 개정본 보존 및 `released_at` 기준 as-of 조회
+- 결측값은 추정하지 않고 `UNKNOWN`으로 처리
+- API 키·URL의 비밀값은 출력하지 않으며 `.env`는 저장소에 포함하지 않음
+
+### 데이터 갱신 주기
+
+기본값은 API 성격과 호출 부담에 맞춰 소스별로 분리됩니다.
+
+- Binance 공개 시장 데이터: **30초**
+- 현재 FRED / Treasury / KRX 최신 공개 일별값: **5분**
+- ECOS: **30분**
+- KRX 전체 이력 / 설정형 공식 어댑터: **6시간**
+- ALFRED 빈티지: 자동 실시간 갱신에서 제외하고 **명시적 `collect-alfred` 실행 시에만** 수집
+
+`.env`에서 조정할 수 있습니다.
+
+```env
+ECONOMICS_CRYPTO_REFRESH_SECONDS=30
+ECONOMICS_REFRESH_MINUTES=5
+ECONOMICS_MACRO_REFRESH_MINUTES=30
+ECONOMICS_FULL_REFRESH_HOURS=6
+```
+
+짧게 설정해도 프로그램 내부 최소값보다 낮아지지 않습니다.
+
+### KRX 데이터의 의미
+
+KRX Open API의 `KOSPI 시리즈 일별시세정보`, `KOSDAQ 시리즈 일별시세정보`는 **일별 데이터**입니다. v0.4.3은 더 이상 임의로 이틀 전까지만 조회하지 않고 **한국시간 기준 오늘 → 직전 영업일 순서로 가장 최근 공개된 행을 먼저 확인**합니다. 다만 KRX Open API가 장중 실시간 지수 틱을 제공하는 것은 아니므로, 장중에는 가장 최근 공개된 EOD 값이 표시될 수 있습니다.
+
+프로그램은 각 숫자에 `LIVE`, `TODAY`, `LATEST EOD`, `STALE Nd` 같은 freshness 상태와 기준일을 표시해 오래된 값을 실시간 시세처럼 보이지 않게 합니다. 진짜 장중 실시간 KOSPI/KOSDAQ이 필요하면 KRX가 허용한 실시간/지연시세 공급계약 또는 승인된 벤더 데이터가 별도로 필요합니다. 이 프로그램은 비공식 웹스크래핑으로 실시간값을 위조하지 않습니다.
+
+### FRED / ALFRED
+
+FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈티지 데이터이므로 현재 시세 갱신과 분리했습니다. `SP500`, `DJIA`처럼 빈티지 조회가 불안정한 계열과 중단된 `EQTA`는 자동 ALFRED 폴링 대상에서 제외합니다. FRED 오류가 발생하면 HTTP 상태뿐 아니라 가능한 범위에서 공식 응답의 오류 메시지도 함께 남기며 키는 가립니다.
 
 ## Windows 빠른 시작
 
@@ -25,41 +55,24 @@ Copy-Item .env.example .env
 .\EconomicsRadar.exe keys
 .\EconomicsRadar.exe rulebook
 .\EconomicsRadar.exe launch
-.\EconomicsRadar.exe collect-official
-.\EconomicsRadar.exe run
-.\EconomicsRadar.exe serve
 ```
 
-`collect-official`의 Treasury·Binance 수집에는 키가 필요하지 않습니다. 아래 입력은 해당 소스를 사용할 때만 필요합니다.
+`.env`에 필요한 키를 넣습니다.
 
-- `FRED_API_KEY`: FRED/ALFRED 수집
-- `ECOS_API_KEY`: 한국은행 ECOS 수집
-- `KRX_API_KEY`: KRX 인증키. 사용할 KRX 서비스는 별도 활용승인이 필요하며 URL은 프로그램에 내장됩니다.
-- `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 공식 JSON 응답의 필드 매핑 파일
-
-KRX는 인증키 발급과 서비스 활용승인이 별도입니다. 프로그램은 사용자별 URL을 요구하지 않고 공식 URL을 내장합니다. v0.4.2는 KRX가 제공하는 아래 31개 승인 서비스를 모두 수집합니다. 승인되지 않은 서비스는 이름과 함께 HTTP 401 오류로 보고됩니다.
-
-- 지수: KRX·KOSPI·KOSDAQ 시리즈 일별시세, 채권지수 시세, 파생상품지수 시세
-- 주식: 유가증권·코스닥·코넥스 일별매매, 신주인수권증권·신주인수권증서 일별매매, 유가증권·코스닥·코넥스 종목기본정보
-- ETP: ETF·ETN·ELW 일별매매
-- 채권: 국채전문유통시장·일반채권시장·소액채권시장 일별매매
-- 파생상품: 선물(주식선물 외), 유가·코스닥 주식선물, 옵션(주식옵션 외), 유가·코스닥 주식옵션 일별매매
-- 일반상품·ESG: 석유·금·배출권 시장 일별매매, ESG 증권상품, 사회책임투자채권, ESG 지수
-
-모든 서비스는 행 수와 서비스별 집계 계열을 저장합니다. KOSPI·KOSDAQ 시장폭, KOSPI200 선물 베이시스, KOSPI200 옵션 풋/콜은 룰북의 `KRX_BREADTH`, `KRX_BASIS`, `KRX_PUT_CALL`에 연결됩니다. 승인 목록에 없는 외국인 투자자별 순매수와 공매도 잔고는 추정값으로 만들지 않습니다.
-
-키를 입력한 뒤 전체 수집은 다음과 같습니다.
-
-```powershell
-.\EconomicsRadar.exe collect-fred 2000-01-01
-.\EconomicsRadar.exe collect-alfred 2000-01-01
-.\EconomicsRadar.exe collect-public
-.\EconomicsRadar.exe collect-ecos
-.\EconomicsRadar.exe collect-krx
-.\EconomicsRadar.exe collect-all 2000-01-01
+```env
+FRED_API_KEY=
+ECOS_API_KEY=
+KRX_API_KEY=
 ```
 
-## 명령
+- `FRED_API_KEY`: FRED 수집 및 명시적 ALFRED 수집
+- `ECOS_API_KEY`: 한국은행 ECOS
+- `KRX_API_KEY`: KRX Open API 인증키. 서비스별 활용승인이 별도로 필요
+- `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 설정형 공식 JSON 어댑터
+
+실제 키는 GitHub나 Release ZIP에 포함되지 않습니다.
+
+## 주요 명령
 
 ```text
 launch
@@ -70,6 +83,7 @@ collect-alfred [start] [series]
 collect-public
 collect-ecos [series]
 collect-krx [api-id]
+collect-krx-live
 collect-official
 collect-all [start]
 run [as-of]
@@ -78,28 +92,31 @@ serve
 demo
 ```
 
-`launch`는 로컬 서버가 없으면 시작한 뒤 기본 브라우저로 대시보드를 열고, 이미 실행 중이면 기존 서버를 재사용해 브라우저만 엽니다. 인자 없이 `EconomicsRadar.exe`를 실행해도 `launch`와 동일하게 동작합니다. 앱 시작 직후 전체 공식 데이터를 백그라운드에서 수집·재계산하고, 이후 FRED·Treasury·Binance는 기본 15분마다, ALFRED·ECOS·KRX·설정형 공식 어댑터는 기본 6시간마다 갱신합니다. 화면의 `최신 데이터 수집` 버튼은 전체 수집을 즉시 요청합니다. 주기는 `.env`의 `ECONOMICS_REFRESH_MINUTES`, `ECONOMICS_FULL_REFRESH_HOURS`로 조절할 수 있습니다. `serve`도 같은 자동 갱신을 사용하며 브라우저만 열지 않습니다.
+`collect-krx-live`는 KOSPI·KOSDAQ 등 화면에 직접 쓰이는 KRX 핵심 계열을 오늘부터 역순으로 빠르게 확인합니다. `collect-krx`는 31개 승인 서비스의 일별 이력·파생 지표를 수집합니다.
 
-대시보드는 터미널형 `F1 종합`, `F2 미국`, `F3 한국`, `F4 코인` 탭으로 구성됩니다. 종합 탭은 USD/KRW·비트코인·S&P 500·나스닥·다우·KOSPI·KOSDAQ과 계기판·시장별 경고등·위험 히트맵을 표시합니다. 시장별 탭은 미국 주식·VIX·국채·신용·달러, 한국 주식·시장폭·선물·옵션·채권, 코인 현물·펀딩·미결제약정·베이시스·포지셔닝을 각각 묶어 보여 줍니다. 각 숫자에는 출처·기준 시점·변화율·최근 추세를 함께 표시하며 결측값은 추정하지 않습니다.
+인자 없이 `EconomicsRadar.exe`를 실행하면 `launch`와 동일하게 로컬 서버를 시작하고 기본 브라우저를 엽니다. 기본 주소는 `http://127.0.0.1:8765`입니다.
 
-`run 2025-12-31`처럼 날짜 또는 RFC3339 시각을 넘기면 그 시점에 발표된 데이터만 사용합니다. `backtest`도 같은 기준을 사용하며, 실수로 과도한 실행을 하지 않도록 기본 최대 관측일 수를 5,000개로 제한합니다.
+엔드포인트는 `/`, `/api/dashboard`, `/api/snapshot`, `/api/refresh-status`, `/api/refresh`, `/health`입니다.
 
-FRED/ALFRED의 마지막 `series`는 선택사항입니다. 예를 들어 `collect-alfred 2000-01-01 ANFCI`는 해당 계열만 재수집합니다.
+## 대시보드
 
-ECOS도 `collect-ecos KR_USD_KRW`처럼 마지막 `series`를 지정해 한 계열만 재수집할 수 있습니다.
+- `F1 종합`
+- `F2 미국`
+- `F3 한국`
+- `F4 코인`
 
-KRX도 `collect-krx fut_bydd_trd`처럼 공식 API ID를 지정해 한 서비스만 재수집할 수 있습니다. 인자를 생략하면 31개 서비스를 모두 수집합니다.
+상단 티커와 세부 표는 각 값의 실제 출처와 기준일을 보여 줍니다. 여러 후보 소스가 있는 지표는 단순히 첫 번째 소스를 고르지 않고 **실제로 더 최신인 관측치**를 선택합니다. 예를 들어 ECOS 원/달러가 오래되고 FRED DEXKOUS가 더 최신이면 최신 FRED 관측치를 사용합니다.
 
-서버 기본 주소는 `http://127.0.0.1:8765`입니다. 엔드포인트는 `/`, `/api/dashboard`, `/api/snapshot`, `/api/refresh-status`, `/api/refresh`, `/health`이며 로컬 바인딩이 기본값입니다.
+`최신 데이터 수집` 버튼은 전체 갱신을 즉시 요청합니다. 자동 갱신 중 오류가 일부 발생해도 성공한 최신값은 그대로 보존하며, 역사 데이터 오류와 현재값 오류를 가능한 한 분리합니다.
 
-## 데이터 결과 해석
+## 백테스트
 
-- `global_risk`: 신뢰도 35 미만이면 `null`
-- `stress`, `vulnerability`, `resilience`: 충분한 독립 표본이 있는 축만 숫자
-- `confidence`: 전체 설계 가중치 중 실제 계산 가능한 비율과 신선도
-- `data_quality`: 추적 중인 공식 소스 중 신선한 소스 비율
-- `rules_indeterminate`: 결측 때문에 참/거짓을 확정하지 못한 규칙 수
-- `rule_hits`: 원문 규칙의 ID·조건·메시지를 보존한 발동 결과
+```powershell
+.\EconomicsRadar.exe collect-alfred 2000-01-01
+.\EconomicsRadar.exe backtest 2020-01-01 2026-08-20
+```
+
+`run 2025-12-31`처럼 날짜 또는 RFC3339 시각을 넘기면 그 시점에 발표된 데이터만 사용합니다. 기본 최대 관측일 수는 5,000개입니다.
 
 ## 개발 검증
 
@@ -110,6 +127,6 @@ cargo test --all-targets --all-features
 cargo run -- rulebook
 ```
 
-CI는 Ubuntu와 Windows에서 같은 검사를 수행합니다. 태그 워크플로는 테스트 후 EXE, 정규 룰북, 설정 예제, 문서와 라이선스를 ZIP에 넣어 GitHub Release를 생성합니다.
+CI는 Ubuntu와 Windows에서 동일한 검사를 수행합니다. Release workflow는 Windows x64 EXE를 빌드한 뒤 정규 룰북·설정 예제·문서와 함께 ZIP으로 패키징하고, 패키지 내부의 EXE로 룰북 검증을 다시 수행한 후 GitHub Release를 만듭니다.
 
 이 프로젝트는 시장 위험 감시·연구 도구이며 투자수익을 보장하거나 주문을 실행하지 않습니다.

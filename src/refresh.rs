@@ -1,4 +1,4 @@
-use crate::{collectors, config::Config, db::Db, engine};
+use crate::{collectors, config::Config, db::Db, engine, live_market};
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use serde::Serialize;
 use std::{
@@ -11,6 +11,40 @@ use std::{
 };
 
 const INCREMENTAL_LOOKBACK_DAYS: i64 = 120;
+const FRED_CURRENT_SERIES: &[&str] = &[
+    "WEI",
+    "CFNAI",
+    "SAHMREALTIME",
+    "ICSA",
+    "CCSA",
+    "STLFSI4",
+    "NFCI",
+    "ANFCI",
+    "NFCILEVERAGE",
+    "BAMLH0A0HYM2",
+    "BAMLC0A0CM",
+    "T10Y2Y",
+    "T10Y3M",
+    "VIXCLS",
+    "SP500",
+    "NASDAQCOM",
+    "DJIA",
+    "DGS10",
+    "DGS2",
+    "WALCL",
+    "RRPONTSYD",
+    "TOTRESNS",
+    "WRESBAL",
+    "DEXKOUS",
+    "DTWEXBGS",
+    "MORTGAGE30US",
+    "DRCCLACBS",
+    "DRCLACBS",
+    "BUSLOANS",
+    "TOTLL",
+    "KORLOLITOAASTSAM",
+    "CHNLOLITOAASTSAM",
+];
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,32 +114,58 @@ fn refresh_loop(
     receiver: Receiver<RefreshMode>,
     status: Arc<Mutex<RefreshStatus>>,
 ) {
-    let fast_interval = Duration::from_secs(config.refresh_minutes.saturating_mul(60));
+    let crypto_interval = Duration::from_secs(config.crypto_refresh_seconds());
+    let market_interval = Duration::from_secs(config.refresh_minutes.saturating_mul(60));
+    let macro_interval = Duration::from_secs(config.macro_refresh_minutes().saturating_mul(60));
     let full_interval = Duration::from_secs(config.full_refresh_hours.saturating_mul(3_600));
-    let mut mode = RefreshMode::Full;
+
+    run_cycle(&config, RefreshMode::Full, true, true, &status);
+    let mut last_market = Instant::now();
+    let mut last_macro = Instant::now();
     let mut last_full = Instant::now();
 
     loop {
-        run_cycle(&config, mode, &status);
-        if matches!(mode, RefreshMode::Full) {
-            last_full = Instant::now();
-        }
-
-        mode = match receiver.recv_timeout(fast_interval) {
-            Ok(requested) => {
-                with_status(&status, |state| state.queued = false);
-                requested
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) if last_full.elapsed() >= full_interval => {
-                RefreshMode::Full
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => RefreshMode::Fast,
+        let requested = match receiver.recv_timeout(crypto_interval) {
+            Ok(mode) => Some(mode),
+            Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
+        if matches!(requested, Some(RefreshMode::Full)) {
+            with_status(&status, |state| state.queued = false);
+            run_cycle(&config, RefreshMode::Full, true, true, &status);
+            last_market = Instant::now();
+            last_macro = Instant::now();
+            last_full = Instant::now();
+            continue;
+        }
+
+        if last_full.elapsed() >= full_interval {
+            run_cycle(&config, RefreshMode::Full, true, true, &status);
+            last_market = Instant::now();
+            last_macro = Instant::now();
+            last_full = Instant::now();
+            continue;
+        }
+
+        let market_due = last_market.elapsed() >= market_interval;
+        let macro_due = last_macro.elapsed() >= macro_interval;
+        run_cycle(&config, RefreshMode::Fast, market_due, macro_due, &status);
+        if market_due {
+            last_market = Instant::now();
+        }
+        if macro_due {
+            last_macro = Instant::now();
+        }
     }
 }
 
-fn run_cycle(config: &Config, mode: RefreshMode, status: &Arc<Mutex<RefreshStatus>>) {
+fn run_cycle(
+    config: &Config,
+    mode: RefreshMode,
+    market_due: bool,
+    macro_due: bool,
+    status: &Arc<Mutex<RefreshStatus>>,
+) {
     with_status(status, |state| {
         state.running = true;
         state.mode = Some(mode);
@@ -113,7 +173,7 @@ fn run_cycle(config: &Config, mode: RefreshMode, status: &Arc<Mutex<RefreshStatu
         state.errors.clear();
     });
 
-    let result = collect_and_calculate(config, mode);
+    let result = collect_and_calculate(config, mode, market_due, macro_due);
     with_status(status, |state| {
         state.running = false;
         state.mode = None;
@@ -138,50 +198,71 @@ struct RefreshOutcome {
     snapshot_as_of: String,
 }
 
-fn collect_and_calculate(config: &Config, mode: RefreshMode) -> Result<RefreshOutcome, String> {
+fn collect_current_fred(config: &Config, db: &Db, start: &str) -> collectors::CollectionReport {
+    let mut report = collectors::CollectionReport::default();
+    for series in FRED_CURRENT_SERIES {
+        match collectors::collect_fred(config, db, start, false, Some(series)) {
+            Ok(collected) => report.merge(collected),
+            Err(error) => report.errors.push(format!("{series}: {error}")),
+        }
+    }
+    report
+}
+
+fn collect_and_calculate(
+    config: &Config,
+    mode: RefreshMode,
+    market_due: bool,
+    macro_due: bool,
+) -> Result<RefreshOutcome, String> {
     let db = Db::open(&config.db_path).map_err(|error| format!("database: {error}"))?;
     let start =
         (Utc::now().date_naive() - ChronoDuration::days(INCREMENTAL_LOOKBACK_DAYS)).to_string();
     let mut report = collectors::CollectionReport::default();
 
-    if config.fred_api_key.is_some() {
-        merge_result(
-            &mut report,
-            "fred",
-            collectors::collect_fred(config, &db, &start, false, None),
-        );
-        if matches!(mode, RefreshMode::Full) {
-            merge_result(
-                &mut report,
-                "alfred",
-                collectors::collect_fred(config, &db, &start, true, None),
-            );
-        }
-    }
-    merge_result(
-        &mut report,
-        "treasury",
-        collectors::collect_treasury(config, &db),
-    );
     merge_result(
         &mut report,
         "binance",
         collectors::collect_binance(config, &db),
     );
 
-    if matches!(mode, RefreshMode::Full) {
-        if config.ecos_api_key.is_some() {
-            merge_result(
-                &mut report,
-                "ecos",
-                collectors::collect_ecos(config, &db, None),
-            );
+    if market_due || matches!(mode, RefreshMode::Full) {
+        if config.fred_api_key.is_some() {
+            report.merge(collect_current_fred(config, &db, &start));
         }
+        merge_result(
+            &mut report,
+            "treasury",
+            collectors::collect_treasury(config, &db),
+        );
         if config.krx_api_key.is_some() {
             merge_result(
                 &mut report,
-                "krx",
+                "krx latest",
+                live_market::collect_krx_fast(config, &db),
+            );
+        }
+    }
+
+    if (macro_due || matches!(mode, RefreshMode::Full)) && config.ecos_api_key.is_some() {
+        merge_result(
+            &mut report,
+            "ecos",
+            collectors::collect_ecos(config, &db, None),
+        );
+    }
+
+    if matches!(mode, RefreshMode::Full) {
+        if config.krx_api_key.is_some() {
+            merge_result(
+                &mut report,
+                "krx history",
                 collectors::collect_krx(config, &db, None),
+            );
+            merge_result(
+                &mut report,
+                "krx latest",
+                live_market::collect_krx_fast(config, &db),
             );
         }
         merge_result(
@@ -189,6 +270,9 @@ fn collect_and_calculate(config: &Config, mode: RefreshMode) -> Result<RefreshOu
             "official adapters",
             collectors::collect_configured_adapters(config, &db),
         );
+        // ALFRED is historical/revision data, not a live feed. It is intentionally excluded
+        // from automatic refresh so vintage endpoint failures cannot make current data look stale.
+        // Use `collect-alfred` explicitly before historical backtests when required.
     }
 
     let snapshot = engine::run(&db, config).map_err(|error| format!("rule engine: {error}"))?;
@@ -236,5 +320,10 @@ mod tests {
         assert_eq!(json["running"], true);
         assert_eq!(json["mode"], "full");
         assert_eq!(json["stored"], 2);
+    }
+
+    #[test]
+    fn discontinued_eqta_is_not_polled_by_live_refresh() {
+        assert!(!FRED_CURRENT_SERIES.contains(&"EQTA"));
     }
 }

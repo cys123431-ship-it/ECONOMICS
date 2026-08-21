@@ -1,4 +1,5 @@
 use crate::{dashboard, db::Db, refresh::RefreshControl};
+use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -10,6 +11,7 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self'; scr
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("dashboard.css");
 const DASHBOARD_JS: &str = include_str!("dashboard.js");
+const TICKER_KEYS: &[&str] = &["usdkrw", "btc", "sp500", "nasdaq", "dow", "kospi", "kosdaq"];
 
 pub fn serve_with_refresh(
     host: &str,
@@ -40,6 +42,58 @@ fn serve_internal(
         }
     }
     Ok(())
+}
+
+fn decorate_ticker_freshness(dashboard: &mut Value) {
+    let Some(indicators) = dashboard
+        .get_mut("indicators")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for indicator in indicators {
+        let Some(key) = indicator.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !TICKER_KEYS.contains(&key) {
+            continue;
+        }
+        let label = indicator
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or(key)
+            .to_string();
+        let freshness = indicator
+            .get("freshness")
+            .and_then(Value::as_str)
+            .unwrap_or("UNKNOWN")
+            .to_string();
+        let date = indicator
+            .get("observed_at")
+            .and_then(Value::as_str)
+            .and_then(|value| value.get(..10))
+            .unwrap_or("NO DATE")
+            .to_string();
+        if let Some(object) = indicator.as_object_mut() {
+            object.insert(
+                "label".into(),
+                Value::String(format!("{label} · {freshness} · {date}")),
+            );
+        }
+    }
+}
+
+fn dashboard_response(db: &Db) -> Result<String, Box<dyn std::error::Error>> {
+    let snapshot = db
+        .latest_snapshot_json()?
+        .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
+        .unwrap_or_else(|| json!({"status":"no_snapshot"}));
+    let mut dashboard = serde_json::to_value(dashboard::build(db)?)?;
+    decorate_ticker_freshness(&mut dashboard);
+    Ok(serde_json::to_string(&json!({
+        "snapshot": snapshot,
+        "dashboard": dashboard,
+    }))?)
 }
 
 fn handle(
@@ -105,14 +159,7 @@ fn handle(
         }
         "/api/dashboard" => {
             let db = Db::open(db_path)?;
-            let snapshot = db
-                .latest_snapshot_json()?
-                .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
-                .unwrap_or_else(|| serde_json::json!({"status":"no_snapshot"}));
-            let body = serde_json::to_string(&serde_json::json!({
-                "snapshot": snapshot,
-                "dashboard": dashboard::build(&db)?,
-            }))?;
+            let body = dashboard_response(&db)?;
             respond(
                 &mut stream,
                 "200 OK",
@@ -207,5 +254,22 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("data-tab=\"korea\""));
         assert!(DASHBOARD_HTML.contains("data-tab=\"crypto\""));
         assert!(DASHBOARD_CSS.contains(".dial"));
+    }
+
+    #[test]
+    fn ticker_labels_expose_freshness_and_date() {
+        let mut value = json!({
+            "indicators": [{
+                "key":"kospi",
+                "label":"코스피",
+                "freshness":"LATEST EOD",
+                "observed_at":"2026-08-20"
+            }]
+        });
+        decorate_ticker_freshness(&mut value);
+        assert_eq!(
+            value["indicators"][0]["label"],
+            "코스피 · LATEST EOD · 2026-08-20"
+        );
     }
 }

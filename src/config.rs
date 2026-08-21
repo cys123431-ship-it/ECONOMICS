@@ -72,6 +72,14 @@ fn value(name: &str, file: &HashMap<String, String>) -> Option<String> {
         .filter(|value| !value.trim().is_empty())
 }
 
+fn numeric_setting(name: &str, default: u64, min: u64, max: u64) -> u64 {
+    let file = load_dotenv();
+    value(name, &file)
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(default)
+        .clamp(min, max)
+}
+
 fn default_rulebook_path() -> PathBuf {
     let local = PathBuf::from("rulebook").join(CANONICAL_RULEBOOK_NAME);
     if local.is_file() {
@@ -115,13 +123,21 @@ impl Config {
                 .clamp(20, 365),
             refresh_minutes: value("ECONOMICS_REFRESH_MINUTES", &file)
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(15)
-                .clamp(1, 1_440),
+                .unwrap_or(5)
+                .clamp(1, 60),
             full_refresh_hours: value("ECONOMICS_FULL_REFRESH_HOURS", &file)
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(6)
                 .clamp(1, 168),
         }
+    }
+
+    pub fn crypto_refresh_seconds(&self) -> u64 {
+        numeric_setting("ECONOMICS_CRYPTO_REFRESH_SECONDS", 30, 15, 300)
+    }
+
+    pub fn macro_refresh_minutes(&self) -> u64 {
+        numeric_setting("ECONOMICS_MACRO_REFRESH_MINUTES", 30, 5, 360)
     }
 
     pub fn print_key_status(&self) {
@@ -133,6 +149,13 @@ impl Config {
             println!("{name}: {}", if present { "configured" } else { "missing" });
         }
         println!("rulebook: {}", self.rulebook_path.display());
+        println!(
+            "refresh: crypto={}s market={}m macro={}m full={}h",
+            self.crypto_refresh_seconds(),
+            self.refresh_minutes,
+            self.macro_refresh_minutes(),
+            self.full_refresh_hours
+        );
         println!(
             "official adapters: {}",
             self.official_adapters_file
