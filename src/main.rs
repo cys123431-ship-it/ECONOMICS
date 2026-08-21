@@ -4,6 +4,7 @@ mod dashboard;
 mod db;
 mod dsl;
 mod engine;
+mod live_market;
 mod refresh;
 mod rulebook;
 mod scoring;
@@ -13,6 +14,40 @@ use collectors::CollectionReport;
 use config::Config;
 use db::{Db, NewObservation};
 use std::{error::Error, io, process::Command, time::Duration};
+
+const ALFRED_SKIP_SERIES: &[&str] = &["SP500", "DJIA", "EQTA"];
+const ALFRED_SERIES: &[&str] = &[
+    "WEI",
+    "CFNAI",
+    "SAHMREALTIME",
+    "ICSA",
+    "CCSA",
+    "STLFSI4",
+    "NFCI",
+    "ANFCI",
+    "NFCILEVERAGE",
+    "BAMLH0A0HYM2",
+    "BAMLC0A0CM",
+    "T10Y2Y",
+    "T10Y3M",
+    "VIXCLS",
+    "NASDAQCOM",
+    "DGS10",
+    "DGS2",
+    "WALCL",
+    "RRPONTSYD",
+    "TOTRESNS",
+    "WRESBAL",
+    "DEXKOUS",
+    "DTWEXBGS",
+    "MORTGAGE30US",
+    "DRCCLACBS",
+    "DRCLACBS",
+    "BUSLOANS",
+    "TOTLL",
+    "KORLOLITOAASTSAM",
+    "CHNLOLITOAASTSAM",
+];
 
 fn usage() {
     println!(
@@ -26,6 +61,7 @@ fn usage() {
            collect-public\n\
            collect-ecos [series]\n\
            collect-krx [api-id]\n\
+           collect-krx-live\n\
            collect-official\n\
            collect-all [start]\n\
            run [as-of]\n\
@@ -127,12 +163,42 @@ fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("krx: {error}")),
         }
+        match live_market::collect_krx_fast(config, db) {
+            Ok(result) => report.merge(result),
+            Err(error) => report.errors.push(format!("krx latest: {error}")),
+        }
     }
     match collectors::collect_configured_adapters(config, db) {
         Ok(result) => report.merge(result),
         Err(error) => report
             .errors
             .push(format!("configured official adapters: {error}")),
+    }
+    Ok(report)
+}
+
+fn collect_alfred_safe(
+    config: &Config,
+    db: &Db,
+    start: &str,
+    series: Option<&str>,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    if let Some(series) = series {
+        if ALFRED_SKIP_SERIES.contains(&series) {
+            eprintln!(
+                "ALFRED vintage collection skipped for {series}: FRED vintage history is unavailable or unsuitable for automatic polling; current FRED observations remain enabled"
+            );
+            return Ok(CollectionReport::default());
+        }
+        return collectors::collect_fred(config, db, start, true, Some(series));
+    }
+
+    let mut report = CollectionReport::default();
+    for series in ALFRED_SERIES {
+        match collectors::collect_fred(config, db, start, true, Some(series)) {
+            Ok(collected) => report.merge(collected),
+            Err(error) => report.errors.push(format!("{series}: {error}")),
+        }
     }
     Ok(report)
 }
@@ -166,20 +232,32 @@ fn main() -> Result<(), Box<dyn Error>> {
             let verification = rulebook::verify(&config.rulebook_path)?;
             println!("{}", serde_json::to_string_pretty(&verification)?);
         }
-        "collect-fred" | "collect-alfred" => {
+        "collect-fred" => {
             let db = Db::open(&config.db_path)?;
             let start = std::env::args()
                 .nth(2)
                 .unwrap_or_else(|| "2000-01-01".into());
             let series = std::env::args().nth(3);
-            let report = collectors::collect_fred(
+            print_report(&collectors::collect_fred(
                 &config,
                 &db,
                 &start,
-                command == "collect-alfred",
+                false,
                 series.as_deref(),
-            )?;
-            print_report(&report)?;
+            )?)?;
+        }
+        "collect-alfred" => {
+            let db = Db::open(&config.db_path)?;
+            let start = std::env::args()
+                .nth(2)
+                .unwrap_or_else(|| "2000-01-01".into());
+            let series = std::env::args().nth(3);
+            print_report(&collect_alfred_safe(
+                &config,
+                &db,
+                &start,
+                series.as_deref(),
+            )?)?;
         }
         "collect-official" => {
             let db = Db::open(&config.db_path)?;
@@ -200,13 +278,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             let service = std::env::args().nth(2);
             print_report(&collectors::collect_krx(&config, &db, service.as_deref())?)?;
         }
+        "collect-krx-live" => {
+            let db = Db::open(&config.db_path)?;
+            print_report(&live_market::collect_krx_fast(&config, &db)?)?;
+        }
         "collect-all" => {
             let db = Db::open(&config.db_path)?;
             let start = std::env::args()
                 .nth(2)
                 .unwrap_or_else(|| "2000-01-01".into());
             let mut report = collectors::collect_fred(&config, &db, &start, false, None)?;
-            report.merge(collectors::collect_fred(&config, &db, &start, true, None)?);
             report.merge(collect_official(&config, &db)?);
             print_report(&report)?;
         }
@@ -297,5 +378,12 @@ mod tests {
         assert_eq!(dashboard_url("127.0.0.1:8765"), "http://127.0.0.1:8765/");
         assert_eq!(dashboard_url("0.0.0.0:9000"), "http://127.0.0.1:9000/");
         assert_eq!(dashboard_url("[::]:7000"), "http://127.0.0.1:7000/");
+    }
+
+    #[test]
+    fn auto_alfred_skip_list_contains_problematic_series() {
+        assert!(ALFRED_SKIP_SERIES.contains(&"SP500"));
+        assert!(ALFRED_SKIP_SERIES.contains(&"DJIA"));
+        assert!(ALFRED_SKIP_SERIES.contains(&"EQTA"));
     }
 }
