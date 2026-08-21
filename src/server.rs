@@ -1,4 +1,5 @@
 use crate::{dashboard, db::Db, refresh::RefreshControl};
+use chrono::{Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
@@ -63,7 +64,7 @@ fn decorate_ticker_freshness(dashboard: &mut Value) {
             .and_then(Value::as_str)
             .unwrap_or(key)
             .to_string();
-        let freshness = indicator
+        let mut freshness = indicator
             .get("freshness")
             .and_then(Value::as_str)
             .unwrap_or("UNKNOWN")
@@ -74,6 +75,30 @@ fn decorate_ticker_freshness(dashboard: &mut Value) {
             .and_then(|value| value.get(..10))
             .unwrap_or("NO DATE")
             .to_string();
+        let source = indicator
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if source == "KRX" {
+            let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+            let now = Utc::now().with_timezone(&kst);
+            let today = now.date_naive();
+            let observed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok();
+            if observed == Some(today) {
+                freshness = "KRX EOD TODAY".into();
+            } else if observed.is_some_and(|value| value < today)
+                && !matches!(now.weekday(), Weekday::Sat | Weekday::Sun)
+            {
+                let minute = now.hour() * 60 + now.minute();
+                freshness = if minute < 16 * 60 {
+                    "KRX EOD(오늘 16:00 이후)".into()
+                } else if minute < 18 * 60 + 15 {
+                    "KRX EOD(당일 공개 확인 중)".into()
+                } else {
+                    "KRX EOD(최신 공개 종가)".into()
+                };
+            }
+        }
         if let Some(object) = indicator.as_object_mut() {
             object.insert(
                 "label".into(),

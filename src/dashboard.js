@@ -1,11 +1,33 @@
 const $ = (id) => document.getElementById(id);
 
-const NODE_LABELS = {
-  VALUATION: '밸류에이션', BUSINESS_DEBT: '기업부채', CREDIT: '신용', VOLATILITY: '변동성',
-  FINCOND: '금융여건', LEVERAGE: '레버리지', RATES: '금리', USD: '달러', LIQUIDITY: '유동성',
-  BANKING: '은행', TREASURY_AUCTION: '미 국채 입찰', FOREIGN_TREASURY_DEMAND: '해외 국채수요',
-  KOREA_FIN_STAB: '한국 금융안정', KOREA_MARKET_INTERNALS: '한국 내부수급', KOREA_MACRO: '한국 거시경제',
-  CRYPTO_DERIVATIVES: '코인 파생', GROWTH: '성장', LABOR: '고용', HOUSING: '주택', FUNDING: '자금조달'
+const NODE_META = {
+  VALUATION: { label: '주식 밸류에이션', market: 'us' },
+  BUSINESS_DEBT: { label: '기업부채', market: 'us' },
+  CREDIT: { label: '신용시장', market: 'us' },
+  VOLATILITY: { label: '변동성', market: 'us' },
+  FINCOND: { label: '금융여건', market: 'us' },
+  LEVERAGE: { label: '레버리지', market: 'us' },
+  RATES: { label: '금리', market: 'us' },
+  BANKING: { label: '은행 스트레스', market: 'us' },
+  TREASURY_AUCTION: { label: '미 국채 입찰', market: 'us' },
+  FOREIGN_TREASURY_DEMAND: { label: '해외 미 국채 수요', market: 'us' },
+  GROWTH: { label: '성장', market: 'us' },
+  LABOR: { label: '고용', market: 'us' },
+  HOUSING: { label: '주택시장', market: 'us' },
+  KOREA_FIN_STAB: { label: '금융안정', market: 'korea' },
+  KOREA_MARKET_INTERNALS: { label: '시장 내부수급', market: 'korea' },
+  KOREA_MACRO: { label: '거시경제', market: 'korea' },
+  CRYPTO_DERIVATIVES: { label: '파생시장', market: 'crypto' },
+  USD: { label: '달러', market: 'global' },
+  LIQUIDITY: { label: '유동성', market: 'global' },
+  FUNDING: { label: '자금조달', market: 'global' }
+};
+
+const HEATMAP_MARKETS = {
+  us: { label: '미국 시장', short: '미국' },
+  korea: { label: '한국 시장', short: '한국' },
+  crypto: { label: '코인 시장', short: '코인' },
+  global: { label: '글로벌 공통', short: '글로벌' }
 };
 
 const MARKET_CONFIG = {
@@ -217,14 +239,34 @@ function renderOverview(payload, indicators) {
 function renderRiskHeatmap(nodes) {
   const container = $('riskHeatmap');
   clear(container);
-  const entries = Object.entries(nodes).filter(([, value]) => finite(value) !== null).sort((a, b) => Number(b[1]) - Number(a[1]));
-  for (const [name, value] of entries) {
-    const state = riskState(value);
-    const cell = el('div', 'heat-cell');
-    cell.style.background = `color-mix(in srgb, ${state.color} ${Math.round(12 + clamp(value) * .28)}%, #070707)`;
-    cell.style.borderColor = state.color;
-    cell.append(el('span', '', NODE_LABELS[name] || name), el('strong', '', score(value)));
-    container.append(cell);
+  const grouped = { us: [], korea: [], crypto: [], global: [] };
+  for (const [name, value] of Object.entries(nodes)) {
+    if (finite(value) === null) continue;
+    const meta = NODE_META[name] || { label: name, market: 'global' };
+    (grouped[meta.market] || grouped.global).push([name, value, meta]);
+  }
+
+  for (const market of ['us', 'korea', 'crypto', 'global']) {
+    const entries = grouped[market].sort((a, b) => Number(b[1]) - Number(a[1]));
+    if (!entries.length) continue;
+    const info = HEATMAP_MARKETS[market];
+    const group = el('section', `heat-group market-${market}`);
+    const header = el('header', 'heat-group-header');
+    header.append(el('strong', '', info.label), el('span', '', `${entries.length}개 신호`));
+    const grid = el('div', 'heat-grid');
+
+    for (const [, value, meta] of entries) {
+      const state = riskState(value);
+      const cell = el('div', 'heat-cell');
+      cell.style.setProperty('--risk-color', state.color);
+      cell.style.background = `color-mix(in srgb, ${state.color} ${Math.round(12 + clamp(value) * .28)}%, #070707)`;
+      const top = el('div', 'heat-cell-top');
+      top.append(el('span', 'heat-market-tag', info.short), el('span', 'heat-risk-state', state.label));
+      cell.append(top, el('span', 'heat-node-label', meta.label), el('strong', '', score(value)));
+      grid.append(cell);
+    }
+    group.append(header, grid);
+    container.append(group);
   }
 }
 
