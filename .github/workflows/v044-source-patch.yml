@@ -1,0 +1,31 @@
+name: v0.4.4 source patch
+on:
+  push:
+    branches: [ fix/heatmap-krx-eod-v0.4.4 ]
+    paths: [ PATCH_V044 ]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/heatmap-krx-eod-v0.4.4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: python scripts/v044_patch.py
+      - run: cargo fmt --all
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-targets --all-features
+      - run: cargo run -- rulebook
+      - name: Commit patched sources and remove one-shot helpers
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock README.md src/dashboard.js src/dashboard.css src/server.rs
+          git rm -f scripts/v044_patch.py PATCH_V044 .github/workflows/v044-source-patch.yml
+          git commit -m 'fix: clarify risk markets and KRX EOD timing'
+          git push origin HEAD:fix/heatmap-krx-eod-v0.4.4
