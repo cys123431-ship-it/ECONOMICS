@@ -271,7 +271,7 @@ mod tests {
         assert!(CONTENT_SECURITY_POLICY.contains("style-src 'self'"));
         assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self'"));
         assert!(DASHBOARD_JS.contains("fetch('/api/dashboard'"));
-        assert!(DASHBOARD_JS.contains("대시보드 데이터를 불러오지 못했습니다"));
+        assert!(DASHBOARD_JS.contains("대시보드 API 실패"));
         assert!(DASHBOARD_JS.contains("renderMarket"));
         assert!(DASHBOARD_JS.contains("/api/refresh-status"));
         assert!(DASHBOARD_JS.contains("method: 'POST'"));
@@ -279,6 +279,31 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("data-tab=\"korea\""));
         assert!(DASHBOARD_HTML.contains("data-tab=\"crypto\""));
         assert!(DASHBOARD_CSS.contains(".dial"));
+    }
+
+    #[test]
+    fn dashboard_assets_keep_all_market_render_contracts() {
+        assert!(DASHBOARD_JS.contains("const NODE_META"));
+        assert!(DASHBOARD_JS.contains("factorLabel"));
+        assert!(DASHBOARD_JS.contains("renderSafely"));
+        assert!(!DASHBOARD_JS.contains("NODE_LABELS"));
+        for id in [
+            "tickerTape",
+            "overviewGauges",
+            "marketLights",
+            "overviewQuotes",
+            "riskHeatmap",
+            "proprietarySignals",
+            "sourceHealth",
+            "usMarket",
+            "koreaMarket",
+            "cryptoMarket",
+        ] {
+            assert!(
+                DASHBOARD_HTML.contains(&format!("id=\"{id}\"")),
+                "dashboard HTML is missing #{id}"
+            );
+        }
     }
 
     #[test]

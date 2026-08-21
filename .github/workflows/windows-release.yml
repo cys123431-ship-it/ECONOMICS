@@ -11,6 +11,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - run: node --check src/dashboard.js
+      - run: node scripts/dashboard_smoke.js
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
