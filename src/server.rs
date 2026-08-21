@@ -1,4 +1,4 @@
-use crate::db::Db;
+use crate::{dashboard, db::Db, refresh::RefreshControl};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
@@ -11,13 +11,19 @@ const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("dashboard.css");
 const DASHBOARD_JS: &str = include_str!("dashboard.js");
 
-pub fn serve(host: &str, db_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    serve_with_ready(host, db_path, || {})
-}
-
-pub fn serve_with_ready(
+pub fn serve_with_refresh(
     host: &str,
     db_path: PathBuf,
+    refresh: RefreshControl,
+    on_ready: impl FnOnce(),
+) -> Result<(), Box<dyn std::error::Error>> {
+    serve_internal(host, db_path, Some(refresh), on_ready)
+}
+
+fn serve_internal(
+    host: &str,
+    db_path: PathBuf,
+    refresh: Option<RefreshControl>,
     on_ready: impl FnOnce(),
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(host)?;
@@ -26,7 +32,7 @@ pub fn serve_with_ready(
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                if let Err(error) = handle(stream, &db_path) {
+                if let Err(error) = handle(stream, &db_path, refresh.as_ref()) {
                     eprintln!("request failed: {error}");
                 }
             }
@@ -36,7 +42,11 @@ pub fn serve_with_ready(
     Ok(())
 }
 
-fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn handle(
+    mut stream: TcpStream,
+    db_path: &Path,
+    refresh: Option<&RefreshControl>,
+) -> Result<(), Box<dyn std::error::Error>> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut buffer = [0u8; 8192];
@@ -47,6 +57,31 @@ fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::erro
     let method = parts.next().unwrap_or_default();
     let path = parts.next().unwrap_or_default();
 
+    if method == "POST" && path == "/api/refresh" {
+        let Some(refresh) = refresh else {
+            return respond(
+                &mut stream,
+                "503 Service Unavailable",
+                "application/json; charset=utf-8",
+                r#"{"accepted":false,"error":"automatic refresh is disabled"}"#,
+            );
+        };
+        let accepted = refresh.request_full();
+        return respond(
+            &mut stream,
+            if accepted {
+                "202 Accepted"
+            } else {
+                "409 Conflict"
+            },
+            "application/json; charset=utf-8",
+            if accepted {
+                r#"{"accepted":true}"#
+            } else {
+                r#"{"accepted":false,"error":"refresh is already running or queued"}"#
+            },
+        );
+    }
     if method != "GET" {
         return respond(
             &mut stream,
@@ -61,6 +96,34 @@ fn handle(mut stream: TcpStream, db_path: &Path) -> Result<(), Box<dyn std::erro
             let body = db
                 .latest_snapshot_json()?
                 .unwrap_or_else(|| r#"{"status":"no_snapshot"}"#.into());
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
+        "/api/dashboard" => {
+            let db = Db::open(db_path)?;
+            let snapshot = db
+                .latest_snapshot_json()?
+                .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
+                .unwrap_or_else(|| serde_json::json!({"status":"no_snapshot"}));
+            let body = serde_json::to_string(&serde_json::json!({
+                "snapshot": snapshot,
+                "dashboard": dashboard::build(&db)?,
+            }))?;
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
+        "/api/refresh-status" => {
+            let body = refresh.map(RefreshControl::status_json).unwrap_or_else(|| {
+                r#"{"running":false,"errors":["automatic refresh is disabled"]}"#.into()
+            });
             respond(
                 &mut stream,
                 "200 OK",
@@ -135,9 +198,14 @@ mod tests {
         assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
         assert!(CONTENT_SECURITY_POLICY.contains("style-src 'self'"));
         assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self'"));
-        assert!(DASHBOARD_JS.contains("fetch('/api/snapshot'"));
-        assert!(DASHBOARD_JS.contains("데이터를 불러오지 못했습니다"));
-        assert!(DASHBOARD_JS.contains("renderDashboard"));
-        assert!(DASHBOARD_CSS.contains(".risk-hero"));
+        assert!(DASHBOARD_JS.contains("fetch('/api/dashboard'"));
+        assert!(DASHBOARD_JS.contains("대시보드 데이터를 불러오지 못했습니다"));
+        assert!(DASHBOARD_JS.contains("renderMarket"));
+        assert!(DASHBOARD_JS.contains("/api/refresh-status"));
+        assert!(DASHBOARD_JS.contains("method: 'POST'"));
+        assert!(DASHBOARD_HTML.contains("data-tab=\"us\""));
+        assert!(DASHBOARD_HTML.contains("data-tab=\"korea\""));
+        assert!(DASHBOARD_HTML.contains("data-tab=\"crypto\""));
+        assert!(DASHBOARD_CSS.contains(".dial"));
     }
 }

@@ -1406,6 +1406,8 @@ mod tests {
             min_samples: 20,
             http_timeout_secs: 1,
             krx_lookback_days: 60,
+            refresh_minutes: 15,
+            full_refresh_hours: 6,
         };
         let snapshot = run_at(&db, &config, "2026-08-20T23:59:59Z", false).unwrap();
         assert_eq!(snapshot.global_risk, None);

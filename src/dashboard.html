@@ -4,101 +4,85 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>ECONOMICS Radar</title>
+  <title>ECONOMICS Radar Terminal</title>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
-<body data-risk="unknown">
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">ER</span>
-      <div>
-        <p class="eyebrow">MARKET ECONOMY MONITOR</p>
-        <h1>ECONOMICS Radar</h1>
+<body>
+  <header class="terminal-header">
+    <div class="command-bar">
+      <div class="brand-block">
+        <span class="terminal-mark">ER</span>
+        <div>
+          <p>ECONOMICS RADAR // MARKET MONITOR</p>
+          <h1>GLOBAL RISK TERMINAL</h1>
+        </div>
+      </div>
+      <div class="terminal-actions">
+        <span class="connection"><span id="connectionDot" class="status-dot"></span><span id="connectionText">SYSTEM CHECK</span></span>
+        <button id="refreshButton" type="button">최신 데이터 수집</button>
       </div>
     </div>
-    <div class="topbar-actions">
-      <span class="connection"><span id="connectionDot" class="status-dot"></span><span id="connectionText">연결 확인 중</span></span>
-      <button id="refreshButton" type="button">새로고침</button>
-    </div>
+    <div id="tickerTape" class="ticker-tape" aria-label="주요 시장 시세"></div>
+    <nav class="market-tabs" role="tablist" aria-label="시장 선택">
+      <button class="tab-button active" role="tab" aria-selected="true" aria-controls="tab-overview" data-tab="overview">F1 종합</button>
+      <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-us" data-tab="us">F2 미국</button>
+      <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-korea" data-tab="korea">F3 한국</button>
+      <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-crypto" data-tab="crypto">F4 코인</button>
+    </nav>
   </header>
 
   <main>
     <div id="errorBanner" class="error-banner" role="alert" hidden></div>
 
-    <section class="risk-hero" aria-labelledby="riskHeading">
-      <div class="risk-copy">
-        <p class="section-kicker">GLOBAL RISK</p>
-        <div class="risk-line">
-          <strong id="globalRisk" class="risk-number">—</strong>
-          <span id="riskBand" class="risk-badge">계산 중</span>
-        </div>
-        <h2 id="riskHeading">글로벌 시장 위험도</h2>
-        <p id="riskMessage" class="muted">최신 공식 데이터를 불러오고 있습니다.</p>
-        <progress id="riskProgress" max="100" value="0" aria-label="글로벌 위험도"></progress>
+    <section id="tab-overview" class="tab-panel" role="tabpanel">
+      <div class="screen-title">
+        <div><span class="screen-code">ER &lt;GO&gt;</span><h2>종합 시장 계기판</h2></div>
+        <span id="overviewAsOf" class="asof">—</span>
       </div>
-      <dl class="hero-meta">
-        <div><dt>위기 단계</dt><dd id="stage">—</dd></div>
-        <div><dt>신뢰도</dt><dd id="confidence">—</dd></div>
-        <div><dt>데이터 품질</dt><dd id="dataQuality">—</dd></div>
-        <div><dt>기준 시각</dt><dd id="asOf">—</dd></div>
-      </dl>
-    </section>
-
-    <section aria-labelledby="coreHeading">
-      <div class="section-heading">
-        <div><p class="section-kicker">CORE SIGNALS</p><h2 id="coreHeading">핵심 신호</h2></div>
-        <p class="muted">0은 낮음, 100은 높음</p>
-      </div>
-      <div id="coreMetrics" class="metric-grid"></div>
-    </section>
-
-    <section class="split-grid">
-      <article class="panel" aria-labelledby="marketsHeading">
-        <div class="section-heading compact"><div><p class="section-kicker">MARKETS</p><h2 id="marketsHeading">시장별 위험</h2></div></div>
-        <div id="markets" class="rank-list"></div>
-      </article>
-      <article class="panel" aria-labelledby="nodesHeading">
-        <div class="section-heading compact"><div><p class="section-kicker">RISK DRIVERS</p><h2 id="nodesHeading">주요 위험 요인</h2></div></div>
-        <div id="nodes" class="rank-list dense"></div>
-      </article>
-    </section>
-
-    <section class="split-grid">
-      <article class="panel" aria-labelledby="sourcesHeading">
-        <div class="section-heading compact">
-          <div><p class="section-kicker">DATA SOURCES</p><h2 id="sourcesHeading">데이터 상태</h2></div>
-          <span id="sourceSummary" class="summary-pill">—</span>
-        </div>
-        <div id="sources" class="source-list"></div>
-      </article>
-      <article class="panel" aria-labelledby="causesHeading">
-        <div class="section-heading compact"><div><p class="section-kicker">WHY NOW</p><h2 id="causesHeading">현재 경보 원인</h2></div></div>
-        <ol id="causes" class="cause-list"></ol>
-      </article>
-    </section>
-
-    <section class="panel" aria-labelledby="rulesHeading">
-      <div class="section-heading compact">
-        <div><p class="section-kicker">RULE ENGINE</p><h2 id="rulesHeading">주요 발동 규칙</h2></div>
-        <span id="ruleSummary" class="summary-pill">—</span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>등급</th><th>규칙</th><th>영역</th><th>설명</th></tr></thead>
-          <tbody id="ruleHits"></tbody>
-        </table>
+      <div id="overviewGauges" class="gauge-grid"></div>
+      <div id="marketLights" class="market-light-grid"></div>
+      <div class="overview-grid">
+        <section class="terminal-panel quote-monitor">
+          <div class="panel-heading"><span>MAJOR INDEX MONITOR</span><strong>주요 시세</strong></div>
+          <div id="overviewQuotes" class="quote-card-grid"></div>
+        </section>
+        <section class="terminal-panel risk-monitor">
+          <div class="panel-heading"><span>RISK HEATMAP</span><strong>내부 위험 신호</strong></div>
+          <div id="riskHeatmap" class="risk-heatmap"></div>
+        </section>
+        <section class="terminal-panel system-monitor">
+          <div class="panel-heading"><span>RADAR PROPRIETARY</span><strong>고유 평가</strong></div>
+          <div id="proprietarySignals" class="proprietary-grid"></div>
+        </section>
+        <section class="terminal-panel source-monitor">
+          <div class="panel-heading"><span>DATA HEALTH</span><strong>데이터 상태</strong></div>
+          <div id="sourceHealth" class="source-health"></div>
+        </section>
       </div>
     </section>
 
-    <details class="raw-panel">
-      <summary>원본 데이터 보기</summary>
-      <pre id="rawSnapshot">불러오는 중…</pre>
-    </details>
+    <section id="tab-us" class="tab-panel" role="tabpanel" hidden>
+      <div class="screen-title"><div><span class="screen-code">US MARKET &lt;GO&gt;</span><h2>미국 시장 모니터</h2></div><span class="asof market-asof">—</span></div>
+      <div id="usMarket" class="market-terminal"></div>
+    </section>
+
+    <section id="tab-korea" class="tab-panel" role="tabpanel" hidden>
+      <div class="screen-title"><div><span class="screen-code">KR MARKET &lt;GO&gt;</span><h2>한국 시장 모니터</h2></div><span class="asof market-asof">—</span></div>
+      <div id="koreaMarket" class="market-terminal"></div>
+    </section>
+
+    <section id="tab-crypto" class="tab-panel" role="tabpanel" hidden>
+      <div class="screen-title"><div><span class="screen-code">CRYPTO &lt;GO&gt;</span><h2>코인·파생 시장 모니터</h2></div><span class="asof market-asof">—</span></div>
+      <div id="cryptoMarket" class="market-terminal"></div>
+    </section>
   </main>
 
-  <footer>
-    <span>Canonical v4 ULTRA · 결측값은 임의로 채우지 않습니다.</span>
+  <footer class="terminal-footer">
+    <span><i class="legend-dot green"></i> 안정</span>
+    <span><i class="legend-dot amber"></i> 주의</span>
+    <span><i class="legend-dot red"></i> 위험</span>
+    <span>결측값은 임의로 채우지 않음</span>
     <span id="lastUpdated">—</span>
   </footer>
 </body>

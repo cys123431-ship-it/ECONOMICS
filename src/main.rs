@@ -1,8 +1,10 @@
 mod collectors;
 mod config;
+mod dashboard;
 mod db;
 mod dsl;
 mod engine;
+mod refresh;
 mod rulebook;
 mod scoring;
 mod server;
@@ -146,11 +148,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 open_dashboard(&url)?;
             } else {
                 let browser_url = url.clone();
-                server::serve_with_ready(&config.host, config.db_path.clone(), move || {
-                    if let Err(error) = open_dashboard(&browser_url) {
-                        eprintln!("could not open dashboard browser: {error}");
-                    }
-                })?;
+                let refresh = refresh::start(config.clone());
+                server::serve_with_refresh(
+                    &config.host,
+                    config.db_path.clone(),
+                    refresh,
+                    move || {
+                        if let Err(error) = open_dashboard(&browser_url) {
+                            eprintln!("could not open dashboard browser: {error}");
+                        }
+                    },
+                )?;
             }
         }
         "keys" => config.print_key_status(),
@@ -245,7 +253,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         "serve" => {
             rulebook::verify(&config.rulebook_path)?;
-            server::serve(&config.host, config.db_path.clone())?;
+            let refresh = refresh::start(config.clone());
+            server::serve_with_refresh(&config.host, config.db_path.clone(), refresh, || {})?;
         }
         "demo" => {
             rulebook::verify(&config.rulebook_path)?;

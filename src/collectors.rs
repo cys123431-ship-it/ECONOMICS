@@ -66,6 +66,11 @@ const FRED_SERIES: &[&str] = &[
     "T10Y2Y",
     "T10Y3M",
     "VIXCLS",
+    "SP500",
+    "NASDAQCOM",
+    "DJIA",
+    "DGS10",
+    "DGS2",
     "WALCL",
     "RRPONTSYD",
     "TOTRESNS",
@@ -82,7 +87,9 @@ const FRED_SERIES: &[&str] = &[
     "CHNLOLITOAASTSAM",
 ];
 
-const FRED_VINTAGE_PAGE_SIZE: usize = 10_000;
+// FRED's series/vintagedates endpoint accepts at most 1,000 rows per page.
+// A larger value makes every ALFRED request fail with HTTP 400.
+const FRED_VINTAGE_PAGE_SIZE: usize = 1_000;
 const FRED_VINTAGE_WINDOW_SIZE: usize = 100;
 const FRED_REQUEST_ATTEMPTS: usize = 3;
 
@@ -397,6 +404,7 @@ pub fn collect_treasury(config: &Config, db: &Db) -> Result<CollectionReport, Bo
 pub fn collect_binance(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
     let http = client(config)?;
     let mut report = CollectionReport::default();
+    collect_binance_price(&http, db, &mut report);
     for request in [
         BinanceRequest::array(
             "funding",
@@ -506,9 +514,10 @@ fn store_binance_array(
         return;
     };
     for row in rows {
-        let Some(mut number) = parse_number(row.get(request.value_field)) else {
+        let Some(raw_number) = parse_number(row.get(request.value_field)) else {
             continue;
         };
+        let mut number = raw_number;
         if request.absolute {
             number = number.abs();
         }
@@ -525,6 +534,66 @@ fn store_binance_array(
             source_asof: Some(timestamp.clone()),
             revision_id: Some(format!("{timestamp}:{number:.17}")),
             metadata: json!({"symbol":"BTCUSDT","endpoint":request.name}),
+        }));
+        let signed_series = match request.series {
+            "BTC_FUNDING_ABS" => Some("BTC_FUNDING_RATE"),
+            "BTC_BASIS_ABS" => Some("BTC_BASIS_RATE"),
+            _ => None,
+        };
+        if let Some(series) = signed_series {
+            report.record(db.put(&NewObservation {
+                source: "binance".into(),
+                series: series.into(),
+                entity: "BTCUSDT".into(),
+                observed_at: timestamp.clone(),
+                value: raw_number,
+                released_at: Some(timestamp.clone()),
+                source_asof: Some(timestamp.clone()),
+                revision_id: Some(format!("{timestamp}:{raw_number:.17}")),
+                metadata: json!({"symbol":"BTCUSDT","endpoint":request.name,"signed":true}),
+            }));
+        }
+    }
+}
+
+fn collect_binance_price(http: &Client, db: &Db, report: &mut CollectionReport) {
+    let url = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=500";
+    let value = match http
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<Value>())
+    {
+        Ok(value) => value,
+        Err(error) => {
+            report.error("price-history", error);
+            return;
+        }
+    };
+    let Some(rows) = value.as_array() else {
+        report.error("price-history", "expected JSON array");
+        return;
+    };
+    for row in rows {
+        let Some(fields) = row.as_array() else {
+            continue;
+        };
+        let Some(timestamp) = parse_millis(fields.first()) else {
+            continue;
+        };
+        let Some(price) = fields.get(4).and_then(|value| parse_number(Some(value))) else {
+            continue;
+        };
+        report.record(db.put(&NewObservation {
+            source: "binance".into(),
+            series: "BTC_PRICE_USD".into(),
+            entity: "BTCUSDT".into(),
+            observed_at: timestamp.clone(),
+            value: price,
+            released_at: Some(timestamp.clone()),
+            source_asof: Some(timestamp.clone()),
+            revision_id: Some(format!("{timestamp}:{price:.17}")),
+            metadata: json!({"symbol":"BTCUSDT","endpoint":"hourly-klines"}),
         }));
     }
 }

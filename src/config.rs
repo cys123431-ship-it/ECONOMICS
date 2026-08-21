@@ -14,6 +14,8 @@ pub struct Config {
     pub min_samples: usize,
     pub http_timeout_secs: u64,
     pub krx_lookback_days: usize,
+    pub refresh_minutes: u64,
+    pub full_refresh_hours: u64,
 }
 
 fn strip_inline_comment(value: &str) -> &str {
@@ -111,6 +113,14 @@ impl Config {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(60)
                 .clamp(20, 365),
+            refresh_minutes: value("ECONOMICS_REFRESH_MINUTES", &file)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(15)
+                .clamp(1, 1_440),
+            full_refresh_hours: value("ECONOMICS_FULL_REFRESH_HOURS", &file)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(6)
+                .clamp(1, 168),
         }
     }
 

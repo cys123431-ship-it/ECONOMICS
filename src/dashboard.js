@@ -1,61 +1,46 @@
 const $ = (id) => document.getElementById(id);
 
-const LABELS = {
-  US_EQUITY: '미국 주식', KOREA_EQUITY: '한국 주식', CRYPTO: '가상자산',
-  GROWTH: '성장', CREDIT: '신용', USD: '달러', HOUSING: '주택',
-  VOLATILITY: '변동성', FOREIGN_TREASURY_DEMAND: '해외 국채수요',
-  TREASURY_AUCTION: '미 국채 입찰', RATES: '금리', LABOR: '고용',
-  LEVERAGE: '레버리지', BANKING: '은행', KOREA_FIN_STAB: '한국 금융안정',
-  FINCOND: '금융여건', CRYPTO_DERIVATIVES: '가상자산 파생',
-  KOREA_MARKET_INTERNALS: '한국시장 내부수급', BUSINESS_DEBT: '기업부채',
-  LIQUIDITY: '유동성'
+const NODE_LABELS = {
+  VALUATION: '밸류에이션', BUSINESS_DEBT: '기업부채', CREDIT: '신용', VOLATILITY: '변동성',
+  FINCOND: '금융여건', LEVERAGE: '레버리지', RATES: '금리', USD: '달러', LIQUIDITY: '유동성',
+  BANKING: '은행', TREASURY_AUCTION: '미 국채 입찰', FOREIGN_TREASURY_DEMAND: '해외 국채수요',
+  KOREA_FIN_STAB: '한국 금융안정', KOREA_MARKET_INTERNALS: '한국 내부수급', KOREA_MACRO: '한국 거시경제',
+  CRYPTO_DERIVATIVES: '코인 파생', GROWTH: '성장', LABOR: '고용', HOUSING: '주택', FUNDING: '자금조달'
 };
 
-const CORE_METRICS = [
-  ['stress', '시장 스트레스', '현재 충격과 압력의 강도'],
-  ['vulnerability', '구조적 취약성', '충격을 증폭할 수 있는 기반 위험'],
-  ['resilience', '회복 탄력성', '정책·유동성·완충 여력'],
-  ['diffusion', '위험 확산 단계', '여러 시장으로 번진 위험의 단계']
-];
+const MARKET_CONFIG = {
+  us: {
+    title: '미국 시장', riskKey: 'US_EQUITY', target: 'usMarket',
+    factors: ['VALUATION', 'CREDIT', 'VOLATILITY', 'FINCOND', 'LEVERAGE', 'RATES', 'USD', 'TREASURY_AUCTION', 'FOREIGN_TREASURY_DEMAND', 'GROWTH', 'LABOR'],
+    sections: [
+      ['주식·공포지수', 'EQUITY / VOL', ['sp500', 'nasdaq', 'dow', 'vix']],
+      ['채권·금리', 'RATES / CREDIT', ['us10y', 'us2y', 'curve_10y2y', 'hy_spread', 'treasury_bid_cover']],
+      ['달러·금융환경', 'FX / CONDITIONS', ['usd_index', 'usdkrw']]
+    ]
+  },
+  korea: {
+    title: '한국 시장', riskKey: 'KOREA_EQUITY', target: 'koreaMarket',
+    factors: ['KOREA_FIN_STAB', 'KOREA_MARKET_INTERNALS', 'KOREA_MACRO', 'USD', 'LIQUIDITY', 'CREDIT', 'BANKING', 'RATES'],
+    sections: [
+      ['주식·환율', 'EQUITY / FX', ['kospi', 'kosdaq', 'usdkrw', 'kr_base_rate']],
+      ['시장폭·수급', 'BREADTH / INTERNALS', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth']],
+      ['선물·옵션', 'FUTURES / OPTIONS', ['krx_basis', 'krx_futures_oi', 'krx_put_call', 'krx_option_iv']],
+      ['채권', 'FIXED INCOME', ['krx_bond_yield', 'krx_kts_yield']]
+    ]
+  },
+  crypto: {
+    title: '코인 시장', riskKey: 'CRYPTO', target: 'cryptoMarket',
+    factors: ['CRYPTO_DERIVATIVES', 'LIQUIDITY', 'USD', 'LEVERAGE', 'VOLATILITY', 'FUNDING'],
+    sections: [
+      ['비트코인 현물', 'SPOT', ['btc']],
+      ['선물·펀딩', 'FUTURES / FUNDING', ['btc_funding', 'btc_oi', 'btc_basis']],
+      ['포지셔닝·주문흐름', 'POSITIONING / FLOW', ['btc_global_ls', 'btc_top_position', 'btc_top_account', 'btc_taker']]
+    ]
+  }
+};
 
-function finite(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function score(value, digits = 1) {
-  const number = finite(value);
-  return number === null ? '—' : number.toFixed(digits);
-}
-
-function percent(value) {
-  const number = finite(value);
-  return number === null ? '—' : `${number.toFixed(1)}%`;
-}
-
-function clamp(value) {
-  const number = finite(value);
-  return number === null ? 0 : Math.max(0, Math.min(100, number));
-}
-
-function formatTime(value) {
-  if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Seoul'
-  }).format(date);
-}
-
-function riskBand(value) {
-  const number = finite(value);
-  if (number === null) return { key: 'unknown', label: '데이터 부족', message: '충분한 표본이 없어 위험도를 확정하지 않았습니다.' };
-  if (number >= 80) return { key: 'critical', label: '심각', message: '광범위한 고위험 신호가 확인됩니다.' };
-  if (number >= 65) return { key: 'danger', label: '위험', message: '복수 영역의 위험 신호를 면밀히 확인해야 합니다.' };
-  if (number >= 50) return { key: 'warning', label: '경계', message: '평균보다 높은 위험 신호가 누적되고 있습니다.' };
-  if (number >= 35) return { key: 'watch', label: '주의', message: '일부 취약 영역을 중심으로 주의가 필요합니다.' };
-  return { key: 'stable', label: '안정', message: '현재 종합 위험도는 비교적 낮은 구간입니다.' };
-}
+const TICKER_KEYS = ['usdkrw', 'btc', 'sp500', 'nasdaq', 'dow', 'kospi', 'kosdaq'];
+let workerWasRunning = false;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -64,158 +49,380 @@ function el(tag, className, text) {
   return node;
 }
 
-function clear(node) {
-  node.replaceChildren();
+function clear(node) { node.replaceChildren(); }
+function finite(value) { const number = Number(value); return Number.isFinite(number) ? number : null; }
+function clamp(value) { const number = finite(value); return number === null ? 0 : Math.max(0, Math.min(100, number)); }
+function score(value, digits = 1) { const number = finite(value); return number === null ? '—' : number.toFixed(digits); }
+
+function formatTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Seoul' }).format(date);
 }
 
-function addProgress(parent, value, label) {
-  const progress = document.createElement('progress');
-  progress.max = 100;
-  progress.value = clamp(value);
-  progress.setAttribute('aria-label', label);
-  parent.append(progress);
+function compact(value, digits = 1) {
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: digits }).format(value);
 }
 
-function renderCore(snapshot) {
-  const container = $('coreMetrics');
+function formatValue(indicator) {
+  const value = finite(indicator?.value);
+  if (value === null) return '—';
+  const digits = Number(indicator.decimals ?? 2);
+  switch (indicator.unit) {
+    case 'usd': return Math.abs(value) >= 1e7 ? `$${compact(value, 2)}` : `$${value.toLocaleString('en-US', { maximumFractionDigits: digits })}`;
+    case 'krw': return `₩${value.toLocaleString('ko-KR', { maximumFractionDigits: digits })}`;
+    case 'percent': return `${value.toFixed(digits)}%`;
+    case 'rate': return `${(value * 100).toFixed(digits)}%`;
+    case 'contracts': return compact(value, 2);
+    case 'ratio': return value.toFixed(digits);
+    case 'points': return value.toFixed(digits);
+    default: return value.toLocaleString('en-US', { maximumFractionDigits: digits });
+  }
+}
+
+function direction(indicator) {
+  const change = finite(indicator?.change);
+  return change === null || Math.abs(change) < 1e-12 ? 'flat' : change > 0 ? 'up' : 'down';
+}
+
+function formatChange(indicator) {
+  if (!indicator || finite(indicator.value) === null) return 'NO DATA';
+  const pct = finite(indicator.change_pct);
+  const change = finite(indicator.change);
+  if (pct !== null && !['percent', 'rate', 'ratio'].includes(indicator.unit)) return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+  if (change === null) return '—';
+  const adjusted = indicator.unit === 'rate' ? change * 100 : change;
+  return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}`;
+}
+
+function riskState(value) {
+  const risk = finite(value);
+  if (risk === null) return { key: 'amber', label: 'DATA WAIT', color: 'var(--yellow)', message: '충분한 데이터가 아직 없습니다.' };
+  if (risk >= 65) return { key: 'red', label: '위험', color: 'var(--red)', message: '복수 위험 신호가 강하게 켜져 있습니다.' };
+  if (risk >= 45) return { key: 'amber', label: '주의', color: 'var(--yellow)', message: '주의 구간입니다. 변동과 위험 요인을 함께 확인하세요.' };
+  return { key: 'green', label: '안정', color: 'var(--green)', message: '현재 종합 신호는 비교적 안정적입니다.' };
+}
+
+function indicatorMap(payload) {
+  return Object.fromEntries((payload?.dashboard?.indicators || []).map((item) => [item.key, item]));
+}
+
+function sparkline(values, className = 'sparkline') {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 30');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.classList.add(className);
+  const numbers = Array.isArray(values) ? values.map(finite).filter((value) => value !== null) : [];
+  if (numbers.length < 2) return svg;
+  const min = Math.min(...numbers);
+  const max = Math.max(...numbers);
+  const span = Math.max(max - min, Math.abs(max) * .001, 1e-9);
+  const points = numbers.map((value, index) => {
+    const x = 100 * index / (numbers.length - 1);
+    const y = 27 - 24 * (value - min) / span;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  line.setAttribute('points', points);
+  svg.append(line);
+  return svg;
+}
+
+function gaugeCard(label, value, display, description, safeHigh = false) {
+  const state = riskState(safeHigh ? 100 - clamp(value) : value);
+  const card = el('article', 'gauge-card');
+  const dial = el('div', 'dial');
+  dial.style.setProperty('--value', clamp(value));
+  dial.style.setProperty('--gauge', state.color);
+  const needle = el('span', 'needle');
+  needle.style.setProperty('--value', clamp(value));
+  const readout = el('div', 'dial-readout');
+  readout.append(el('strong', '', display), el('small', '', '0  ·  50  ·  100'));
+  dial.append(needle, readout);
+  const copy = el('div', 'gauge-copy');
+  copy.append(el('h3', '', label), el('p', '', description));
+  const status = el('span', `signal-label ${state.key}`, state.label);
+  status.style.color = state.color;
+  copy.append(status);
+  card.append(dial, copy);
+  return card;
+}
+
+function renderTicker(indicators) {
+  const tape = $('tickerTape');
+  clear(tape);
+  for (const key of TICKER_KEYS) {
+    const indicator = indicators[key] || { symbol: key.toUpperCase(), label: key, value: null };
+    const item = el('div', 'ticker-item');
+    item.append(el('span', 'ticker-symbol', indicator.symbol), el('strong', 'ticker-value', formatValue(indicator)));
+    item.append(el('span', 'ticker-name', indicator.label), el('span', `ticker-change ${direction(indicator)}`, formatChange(indicator)));
+    tape.append(item);
+  }
+}
+
+function makeTrafficLight(state) {
+  const light = el('div', `traffic-light ${state}`);
+  light.append(el('i'), el('i'), el('i'));
+  light.setAttribute('aria-label', state === 'red' ? '위험' : state === 'amber' ? '주의' : '안정');
+  return light;
+}
+
+function renderOverview(payload, indicators) {
+  const snapshot = payload.snapshot || {};
+  $('overviewAsOf').textContent = `AS OF ${formatTime(snapshot.as_of)}`;
+  document.querySelectorAll('.market-asof').forEach((node) => { node.textContent = `AS OF ${formatTime(snapshot.as_of)}`; });
+  const gauges = $('overviewGauges');
+  clear(gauges);
+  const vix = finite(indicators.vix?.value);
+  const fearScore = vix === null ? finite(snapshot.nodes?.VOLATILITY) : clamp((vix - 10) * 3.33);
+  const diffusionScore = clamp(Number(snapshot.diffusion || 0) * 12.5);
+  gauges.append(
+    gaugeCard('GLOBAL RISK', snapshot.global_risk, score(snapshot.global_risk), '모든 시장과 거시 위험을 합산한 ECONOMICS Radar 종합점수.'),
+    gaugeCard('공포지수 VIX', fearScore, vix === null ? score(fearScore) : vix.toFixed(2), '미국 옵션시장의 기대 변동성과 내부 변동성 위험을 함께 봅니다.'),
+    gaugeCard('위험 전염도', diffusionScore, `${snapshot.diffusion ?? 0}개`, '고위험 신호가 여러 시장·모듈로 동시에 번지는 정도입니다.'),
+    gaugeCard('데이터 신뢰도', snapshot.confidence, `${score(snapshot.confidence)}%`, '실제 공식 데이터로 계산 가능한 설계 가중치 비율입니다.', true)
+  );
+  const lights = $('marketLights');
+  clear(lights);
+  for (const [key, label] of [['US_EQUITY', '미국'], ['KOREA_EQUITY', '한국'], ['CRYPTO', '코인']]) {
+    const risk = snapshot.markets?.[key];
+    const state = riskState(risk);
+    const card = el('article', 'market-light-card');
+    card.append(makeTrafficLight(state.key));
+    const copy = el('div');
+    copy.append(el('h3', '', `${label} MARKET`), el('p', '', state.message));
+    card.append(copy, el('strong', `market-risk-number ${state.key}`, score(risk)));
+    lights.append(card);
+  }
+  const quotes = $('overviewQuotes');
+  clear(quotes);
+  for (const key of TICKER_KEYS) {
+    const indicator = indicators[key] || { key, symbol: key, label: key, value: null };
+    const card = el('article', 'quote-card');
+    const header = document.createElement('header');
+    header.append(el('span', 'symbol', indicator.symbol), el('span', 'source', indicator.source || 'NO SOURCE'));
+    card.append(header, el('strong', 'quote-value', formatValue(indicator)), sparkline(indicator.history));
+    const meta = el('div', 'quote-meta');
+    meta.append(el('span', direction(indicator), `${indicator.change_period || ''} ${formatChange(indicator)}`));
+    meta.append(el('span', '', indicator.observed_at ? String(indicator.observed_at).slice(0, 16) : 'NO DATA'));
+    card.append(meta);
+    quotes.append(card);
+  }
+  renderRiskHeatmap(snapshot.nodes || {});
+  renderProprietary(snapshot);
+  renderSources(snapshot.sources || {});
+}
+
+function renderRiskHeatmap(nodes) {
+  const container = $('riskHeatmap');
   clear(container);
-  for (const [key, label, hint] of CORE_METRICS) {
-    const raw = snapshot[key];
-    const card = el('article', 'metric-card');
-    card.append(el('span', 'label', label));
-    card.append(el('strong', '', key === 'diffusion' ? score(raw, 0) : score(raw)));
+  const entries = Object.entries(nodes).filter(([, value]) => finite(value) !== null).sort((a, b) => Number(b[1]) - Number(a[1]));
+  for (const [name, value] of entries) {
+    const state = riskState(value);
+    const cell = el('div', 'heat-cell');
+    cell.style.background = `color-mix(in srgb, ${state.color} ${Math.round(12 + clamp(value) * .28)}%, #070707)`;
+    cell.style.borderColor = state.color;
+    cell.append(el('span', '', NODE_LABELS[name] || name), el('strong', '', score(value)));
+    container.append(cell);
+  }
+}
+
+function renderProprietary(snapshot) {
+  const container = $('proprietarySignals');
+  clear(container);
+  const items = [
+    ['시장 스트레스', snapshot.stress, '현재 충격·가격 압력의 강도'],
+    ['구조적 취약성', snapshot.vulnerability, '충격을 증폭하는 부채·레버리지 기반'],
+    ['회복 탄력성', snapshot.resilience, '정책·유동성·완충 여력'],
+    ['위기 단계', snapshot.stage, '히스테리시스를 적용한 위기 단계'],
+    ['데이터 품질', snapshot.data_quality, '추적 공식 소스의 신선도'],
+    ['발동 신호 수', snapshot.rules_triggered, '내부 룰 엔진에서 현재 참인 신호 수']
+  ];
+  for (const [label, value, hint] of items) {
+    const card = el('div', 'proprietary-card');
+    card.append(el('span', '', label));
+    card.append(el('strong', '', value === null || value === undefined ? '—' : label === '위기 단계' ? `STAGE ${value}` : score(value)));
     card.append(el('small', '', hint));
-    addProgress(card, key === 'diffusion' ? clamp(Number(raw) * 20) : raw, label);
     container.append(card);
   }
 }
 
-function renderRanks(targetId, values, limit) {
-  const container = $(targetId);
-  clear(container);
-  const entries = Object.entries(values || {})
-    .filter(([, value]) => finite(value) !== null)
-    .sort((left, right) => Number(right[1]) - Number(left[1]))
-    .slice(0, limit);
-  if (!entries.length) {
-    container.append(el('p', 'empty-state', '표시할 데이터가 없습니다.'));
-    return;
-  }
-  for (const [name, value] of entries) {
-    const row = el('div', 'rank-row');
-    row.append(el('span', 'name', LABELS[name] || name));
-    addProgress(row, value, LABELS[name] || name);
-    row.append(el('span', 'value', score(value)));
-    container.append(row);
-  }
-}
-
 function renderSources(sources) {
-  const container = $('sources');
+  const container = $('sourceHealth');
   clear(container);
-  const entries = Object.entries(sources || {}).sort((left, right) => {
-    return Number(right[1]?.fresh) - Number(left[1]?.fresh) || left[0].localeCompare(right[0]);
-  });
-  const freshCount = entries.filter(([, state]) => state?.fresh).length;
-  $('sourceSummary').textContent = `${freshCount}/${entries.length} 정상`;
-  for (const [name, state] of entries) {
-    const row = el('div', 'source-row');
-    row.append(el('span', `fresh-dot${state?.fresh ? ' fresh' : ''}`));
-    const copy = el('div');
-    copy.append(el('div', 'source-name', name));
-    copy.append(el('small', '', state?.latest_observed_at ? `최근 관측 ${state.latest_observed_at}` : '수집 데이터 없음'));
-    row.append(copy);
-    row.append(el('small', '', state?.fresh ? '정상' : '확인 필요'));
-    container.append(row);
+  for (const [name, state] of Object.entries(sources).sort((a, b) => a[0].localeCompare(b[0]))) {
+    const chip = el('div', `source-chip${state?.fresh ? ' fresh' : ''}`);
+    chip.append(el('strong', '', name), document.createTextNode(state?.fresh ? '  ● LIVE' : '  ○ WAIT'));
+    container.append(chip);
   }
 }
 
-function renderCauses(causes) {
-  const container = $('causes');
+function renderMarket(config, payload, indicators) {
+  const snapshot = payload.snapshot || {};
+  const container = $(config.target);
   clear(container);
-  const items = Array.isArray(causes) ? causes.slice(0, 12) : [];
-  if (!items.length) {
-    container.append(el('li', 'empty-state', '현재 표시할 주요 원인이 없습니다.'));
-    return;
+  const risk = snapshot.markets?.[config.riskKey];
+  const state = riskState(risk);
+  const hero = el('section', 'market-hero');
+  const gauge = el('div', 'market-gauge');
+  gauge.append(gaugeCard(`${config.title} RISK`, risk, score(risk), state.message));
+  const summary = el('div', 'market-summary');
+  summary.append(el('h3', '', `${config.title} 상황판 · ${state.label}`));
+  summary.append(el('p', '', buildMarketSummary(config, snapshot, indicators, state)));
+  const topFactors = config.factors.map((name) => [name, finite(snapshot.nodes?.[name])]).filter(([, value]) => value !== null).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const list = el('ul', 'market-summary-list');
+  for (const [name, value] of topFactors) list.append(el('li', '', `${NODE_LABELS[name] || name} ${score(value)}점`));
+  summary.append(list);
+  const lightArea = el('div', 'large-traffic');
+  lightArea.append(makeTrafficLight(state.key), el('strong', '', state.label));
+  hero.append(gauge, summary, lightArea);
+  container.append(hero);
+  const assetGrid = el('div', 'asset-grid');
+  for (const [title, code, keys] of config.sections) {
+    const panel = el('section', 'terminal-panel');
+    const heading = el('div', 'panel-heading');
+    heading.append(el('span', '', code), el('strong', '', title));
+    panel.append(heading, indicatorTable(keys, indicators));
+    assetGrid.append(panel);
   }
-  for (const cause of items) container.append(el('li', '', String(cause)));
+  container.append(assetGrid);
+  const factorPanel = el('section', 'terminal-panel');
+  const heading = el('div', 'panel-heading');
+  heading.append(el('span', '', 'ECONOMICS RADAR SIGNAL MATRIX'), el('strong', '', '내부 위험요인'));
+  const board = el('div', 'factor-board');
+  for (const name of config.factors) {
+    const value = finite(snapshot.nodes?.[name]);
+    const stateForFactor = riskState(value);
+    const card = el('div', 'factor-card');
+    const top = el('div', 'factor-top');
+    top.append(el('span', '', NODE_LABELS[name] || name), el('strong', '', score(value)));
+    const bar = el('div', 'factor-bar');
+    const fill = el('i');
+    fill.style.width = `${clamp(value)}%`;
+    fill.style.background = stateForFactor.color;
+    bar.append(fill);
+    card.append(top, bar);
+    board.append(card);
+  }
+  factorPanel.append(heading, board);
+  container.append(factorPanel);
 }
 
-function severityClass(value) {
-  const normalized = String(value || 'INFO').toLowerCase();
-  return ['red', 'orange', 'yellow', 'green', 'info'].includes(normalized) ? normalized : 'info';
+function buildMarketSummary(config, snapshot, indicators, state) {
+  const available = config.sections.flatMap((section) => section[2]).map((key) => indicators[key]).filter((item) => finite(item?.value) !== null);
+  const movers = available.filter((item) => finite(item.change_pct) !== null).sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct)).slice(0, 2);
+  const moverText = movers.length ? `가장 큰 변화는 ${movers.map((item) => `${item.label} ${formatChange(item)}`).join(', ')}입니다.` : '주요 시세의 비교 변화 데이터가 아직 충분하지 않습니다.';
+  return `${state.message} ${moverText} 전체 모델 신뢰도는 ${score(snapshot.confidence)}%이며 결측치는 위험 신호로 임의 변환하지 않습니다.`;
 }
 
-function renderRules(snapshot) {
-  const container = $('ruleHits');
-  clear(container);
-  const hits = Array.isArray(snapshot.rule_hits) ? snapshot.rule_hits.slice(0, 15) : [];
-  $('ruleSummary').textContent = `${snapshot.rules_triggered ?? hits.length}개 발동`;
-  if (!hits.length) {
+function indicatorTable(keys, indicators) {
+  const table = el('table', 'indicator-table');
+  const head = document.createElement('thead');
+  const headRow = document.createElement('tr');
+  for (const title of ['지표', '현재', '변화', '추세', '기준']) headRow.append(el('th', '', title));
+  head.append(headRow);
+  const body = document.createElement('tbody');
+  for (const key of keys) {
+    const indicator = indicators[key] || { key, symbol: key.toUpperCase(), label: key, value: null, history: [] };
     const row = document.createElement('tr');
-    const cell = el('td', 'empty-state', '현재 발동한 주요 규칙이 없습니다.');
-    cell.colSpan = 4;
-    row.append(cell);
-    container.append(row);
-    return;
+    const nameCell = document.createElement('td');
+    nameCell.append(el('span', 'indicator-name', indicator.symbol), el('span', 'indicator-label', indicator.label));
+    row.append(nameCell, el('td', finite(indicator.value) === null ? 'no-data' : '', formatValue(indicator)));
+    row.append(el('td', direction(indicator), `${indicator.change_period || ''} ${formatChange(indicator)}`));
+    const sparkCell = document.createElement('td');
+    sparkCell.append(sparkline(indicator.history, 'mini-spark'));
+    row.append(sparkCell, el('td', 'indicator-label', indicator.observed_at ? String(indicator.observed_at).slice(0, 10) : '—'));
+    body.append(row);
   }
-  for (const hit of hits) {
-    const row = document.createElement('tr');
-    const severityCell = document.createElement('td');
-    severityCell.append(el('span', `severity ${severityClass(hit.severity)}`, hit.severity || 'INFO'));
-    row.append(severityCell);
-    row.append(el('td', '', `${hit.id || '—'} · ${hit.title || '제목 없음'}`));
-    row.append(el('td', '', hit.scope || '—'));
-    row.append(el('td', '', hit.message || hit.condition || '—'));
-    container.append(row);
-  }
+  table.append(head, body);
+  return table;
 }
 
-function renderDashboard(snapshot) {
-  const globalRisk = finite(snapshot.global_risk);
-  const band = riskBand(globalRisk);
-  document.body.dataset.risk = band.key;
-  $('globalRisk').textContent = score(globalRisk);
-  $('riskBand').textContent = band.label;
-  $('riskMessage').textContent = band.message;
-  $('riskProgress').value = clamp(globalRisk);
-  $('stage').textContent = snapshot.stage == null ? '—' : `Stage ${snapshot.stage}`;
-  $('confidence').textContent = percent(snapshot.confidence);
-  $('dataQuality').textContent = percent(snapshot.data_quality);
-  $('asOf').textContent = formatTime(snapshot.as_of);
-  $('rawSnapshot').textContent = JSON.stringify(snapshot, null, 2);
-  $('lastUpdated').textContent = `화면 갱신 ${formatTime(new Date().toISOString())}`;
-
-  renderCore(snapshot);
-  renderRanks('markets', snapshot.markets, 10);
-  renderRanks('nodes', snapshot.nodes, 20);
-  renderSources(snapshot.sources);
-  renderCauses(snapshot.causes);
-  renderRules(snapshot);
+function render(payload) {
+  const indicators = indicatorMap(payload);
+  renderTicker(indicators);
+  renderOverview(payload, indicators);
+  for (const config of Object.values(MARKET_CONFIG)) renderMarket(config, payload, indicators);
+  $('lastUpdated').textContent = `RESULT ${formatTime(payload.snapshot?.as_of)}`;
 }
 
-async function refresh() {
-  const button = $('refreshButton');
-  const errorBanner = $('errorBanner');
-  button.disabled = true;
-  errorBanner.hidden = true;
-  $('connectionText').textContent = '데이터 갱신 중';
+async function loadDashboard() {
+  const banner = $('errorBanner');
   try {
-    const response = await fetch('/api/snapshot', { cache: 'no-store' });
+    const response = await fetch('/api/dashboard', { cache: 'no-store' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    renderDashboard(await response.json());
-    $('connectionDot').className = 'status-dot online';
-    $('connectionText').textContent = '로컬 연결 정상';
+    render(await response.json());
+    banner.hidden = true;
   } catch (error) {
     $('connectionDot').className = 'status-dot offline';
-    $('connectionText').textContent = '연결 오류';
-    errorBanner.textContent = `데이터를 불러오지 못했습니다: ${error.message}`;
-    errorBanner.hidden = false;
-  } finally {
+    $('connectionText').textContent = 'CONNECTION ERROR';
+    banner.textContent = `대시보드 데이터를 불러오지 못했습니다: ${error.message}`;
+    banner.hidden = false;
+  }
+}
+
+async function loadRefreshStatus() {
+  const button = $('refreshButton');
+  try {
+    const response = await fetch('/api/refresh-status', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const status = await response.json();
+    const running = Boolean(status.running || status.queued);
+    button.disabled = running;
+    button.textContent = running ? '최신 데이터 수집 중…' : '최신 데이터 수집';
+    if (running) {
+      $('connectionDot').className = 'status-dot working';
+      $('connectionText').textContent = status.queued ? 'REFRESH QUEUED' : 'COLLECTING LIVE DATA';
+    } else {
+      $('connectionDot').className = 'status-dot online';
+      const errors = Array.isArray(status.errors) ? status.errors.length : 0;
+      $('connectionText').textContent = errors ? `COMPLETE / ${errors} ERR` : 'AUTO REFRESH ONLINE';
+      if (workerWasRunning) await loadDashboard();
+      if (errors) {
+        $('errorBanner').textContent = `일부 데이터 수집 실패: ${status.errors.slice(0, 3).join(' / ')}`;
+        $('errorBanner').hidden = false;
+      }
+    }
+    workerWasRunning = running;
+  } catch (error) {
+    button.disabled = false;
+    $('connectionDot').className = 'status-dot offline';
+    $('connectionText').textContent = 'STATUS ERROR';
+  }
+}
+
+async function requestRefresh() {
+  const button = $('refreshButton');
+  button.disabled = true;
+  $('connectionText').textContent = 'REQUESTING REFRESH';
+  try {
+    const response = await fetch('/api/refresh', { method: 'POST', cache: 'no-store' });
+    if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
+    await loadRefreshStatus();
+  } catch (error) {
+    $('errorBanner').textContent = `최신 데이터 수집을 시작하지 못했습니다: ${error.message}`;
+    $('errorBanner').hidden = false;
     button.disabled = false;
   }
 }
 
-$('refreshButton').addEventListener('click', refresh);
-refresh();
-setInterval(refresh, 60000);
+function selectTab(name) {
+  document.querySelectorAll('.tab-button').forEach((button) => {
+    const selected = button.dataset.tab === name;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelectorAll('.tab-panel').forEach((panel) => { panel.hidden = panel.id !== `tab-${name}`; });
+}
+
+document.querySelectorAll('.tab-button').forEach((button) => button.addEventListener('click', () => selectTab(button.dataset.tab)));
+document.addEventListener('keydown', (event) => {
+  const shortcut = { F1: 'overview', F2: 'us', F3: 'korea', F4: 'crypto' }[event.key];
+  if (shortcut) { event.preventDefault(); selectTab(shortcut); }
+});
+$('refreshButton').addEventListener('click', requestRefresh);
+loadDashboard();
+loadRefreshStatus();
+setInterval(loadDashboard, 60000);
+setInterval(loadRefreshStatus, 3000);
