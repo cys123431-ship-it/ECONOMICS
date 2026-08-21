@@ -64,9 +64,9 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
 
 .gauge-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 8px; margin-bottom: 8px; }
 .gauge-card { min-height: 186px; display: grid; grid-template-columns: 148px 1fr; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--line); background: linear-gradient(115deg, #0d0d0d, #050505); }
-.dial { --value: 0; --gauge: var(--orange); position: relative; width: 144px; height: 144px; border-radius: 50%; background: conic-gradient(from 225deg, var(--gauge) 0deg calc(var(--value) * 2.7deg), #242424 calc(var(--value) * 2.7deg) 270deg, transparent 270deg); }
+.dial { --value: 0; --gauge: var(--orange); --sweep: calc(var(--value) * 2.7deg); position: relative; width: 144px; height: 144px; border-radius: 50%; background: conic-gradient(from 225deg, var(--gauge) 0deg var(--sweep), #242424 var(--sweep) 270deg, transparent 270deg); }
 .dial::before { content: ""; position: absolute; inset: 16px; border-radius: 50%; background: #050505; border: 1px solid #2b2b2b; }
-.needle { position: absolute; left: 71px; top: 69px; width: 55px; height: 2px; background: #fff; transform-origin: 0 50%; transform: rotate(calc(-135deg + var(--value) * 2.7deg)); box-shadow: 0 0 6px #fff; }
+.needle { position: absolute; left: 71px; top: 69px; width: 55px; height: 2px; background: #fff; transform-origin: 0 50%; transform: rotate(calc(135deg + var(--sweep))); box-shadow: 0 0 6px #fff; }
 .needle::after { content: ""; position: absolute; left: -4px; top: -4px; width: 10px; height: 10px; border-radius: 50%; background: #ddd; }
 .dial-readout { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; transform: translateY(18px); }
 .dial-readout strong { font-size: 25px; color: var(--gauge); }
