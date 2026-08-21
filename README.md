@@ -1,5 +1,7 @@
 # ECONOMICS Radar
 
+> v0.4.4: risk heatmap market grouping and explicit KRX EOD publication status.
+
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
 
 ## v0.4.3

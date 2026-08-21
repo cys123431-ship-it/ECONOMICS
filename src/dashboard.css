@@ -10,6 +10,10 @@
   --green: #22d17f;
   --red: #ff4d57;
   --cyan: #29c7e8;
+  --market-us: #4ea1ff;
+  --market-korea: #c66bff;
+  --market-crypto: #ff9f00;
+  --market-global: #29c7e8;
   --mono: "Cascadia Mono", Consolas, "Noto Sans Mono CJK KR", monospace;
 }
 
@@ -97,9 +101,21 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
 .quote-meta { margin-top: 6px; display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 9px; }
 .sparkline { width: 100%; height: 30px; margin-top: 5px; overflow: visible; }
 .sparkline polyline { fill: none; stroke: var(--cyan); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.risk-heatmap { padding: 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
-.heat-cell { min-height: 58px; padding: 8px; border: 1px solid rgba(255,255,255,.08); display: flex; flex-direction: column; justify-content: space-between; }
-.heat-cell span { font-size: 9px; color: #ddd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.risk-heatmap { padding: 8px; display: grid; gap: 8px; }
+.heat-group { --market-accent: var(--market-global); border: 1px solid #2d2d2d; background: #050505; }
+.heat-group.market-us { --market-accent: var(--market-us); }
+.heat-group.market-korea { --market-accent: var(--market-korea); }
+.heat-group.market-crypto { --market-accent: var(--market-crypto); }
+.heat-group.market-global { --market-accent: var(--market-global); }
+.heat-group-header { min-height: 30px; padding: 6px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--market-accent) 65%, #252525); background: color-mix(in srgb, var(--market-accent) 9%, #090909); }
+.heat-group-header strong { color: var(--market-accent); font-size: 10px; }
+.heat-group-header span { color: var(--muted); font-size: 8px; }
+.heat-grid { padding: 6px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.heat-cell { min-height: 72px; padding: 7px 8px; border: 1px solid var(--risk-color, #333); border-left: 4px solid var(--market-accent); display: flex; flex-direction: column; justify-content: space-between; }
+.heat-cell-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.heat-market-tag { color: var(--market-accent) !important; font-size: 8px !important; font-weight: 900; }
+.heat-risk-state { color: var(--risk-color) !important; font-size: 8px !important; }
+.heat-node-label { color: #eee !important; font-size: 10px !important; font-weight: 700; white-space: normal !important; overflow: visible !important; }
 .heat-cell strong { font-size: 17px; }
 .proprietary-grid { padding: 8px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .proprietary-card { padding: 10px; border: 1px solid #292929; background: #050505; }
