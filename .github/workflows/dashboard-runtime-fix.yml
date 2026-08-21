@@ -1,0 +1,383 @@
+name: Dashboard Runtime Fix
+on:
+  push:
+    branches: [ fix/dashboard-runtime-v0.4.5 ]
+permissions:
+  contents: write
+jobs:
+  fix-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/dashboard-runtime-v0.4.5
+      - name: Apply audited dashboard fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          js_path = Path('src/dashboard.js')
+          js = js_path.read_text(encoding='utf-8')
+
+          old_dollar = "const $ = (id) => document.getElementById(id);"
+          new_dollar = """function $(id) {
+            const node = document.getElementById(id);
+            if (!node) throw new Error(`DOM element #${id} not found`);
+            return node;
+          }"""
+          if old_dollar in js:
+              js = js.replace(old_dollar, new_dollar, 1)
+
+          if 'const FACTOR_LABEL_OVERRIDES' not in js:
+              insert = r'''
+          const FACTOR_LABEL_OVERRIDES = {
+            us: {
+              VALUATION: '미국 주식 밸류에이션', BUSINESS_DEBT: '미국 기업부채', CREDIT: '미국 신용시장',
+              VOLATILITY: '미국 시장 변동성', FINCOND: '미국 금융여건', LEVERAGE: '미국 레버리지',
+              RATES: '미국 금리', BANKING: '미국 은행 스트레스', TREASURY_AUCTION: '미 국채 입찰',
+              FOREIGN_TREASURY_DEMAND: '해외 미 국채 수요', GROWTH: '미국 성장', LABOR: '미국 고용시장',
+              HOUSING: '미국 주택시장', USD: '달러·미국 금융환경'
+            },
+            korea: {
+              KOREA_FIN_STAB: '한국 금융안정', KOREA_MARKET_INTERNALS: '한국 시장 내부수급',
+              KOREA_MACRO: '한국 거시경제', USD: '달러·원화 외부요인', LIQUIDITY: '글로벌 유동성(한국 영향)',
+              CREDIT: '글로벌 신용시장(한국 영향)', BANKING: '글로벌 은행 스트레스(한국 영향)',
+              RATES: '글로벌 금리(한국 영향)'
+            },
+            crypto: {
+              CRYPTO_DERIVATIVES: '코인 파생시장', LIQUIDITY: '글로벌 유동성(코인 영향)',
+              USD: '달러(코인 영향)', LEVERAGE: '시장 레버리지(코인 영향)',
+              VOLATILITY: '시장 변동성(코인 영향)', FUNDING: '코인 자금조달·펀딩'
+            }
+          };
+
+          function factorLabel(config, name) {
+            const market = config?.riskKey === 'US_EQUITY' ? 'us' : config?.riskKey === 'KOREA_EQUITY' ? 'korea' : config?.riskKey === 'CRYPTO' ? 'crypto' : null;
+            return FACTOR_LABEL_OVERRIDES[market]?.[name] || NODE_META[name]?.label || name;
+          }
+          '''
+              anchor = '\nconst MARKET_CONFIG = {'
+              assert anchor in js, 'MARKET_CONFIG anchor missing'
+              js = js.replace(anchor, '\n' + insert + '\nconst MARKET_CONFIG = {', 1)
+
+          old_us_factors = "factors: ['VALUATION', 'CREDIT', 'VOLATILITY', 'FINCOND', 'LEVERAGE', 'RATES', 'USD', 'TREASURY_AUCTION', 'FOREIGN_TREASURY_DEMAND', 'GROWTH', 'LABOR'],"
+          new_us_factors = "factors: ['VALUATION', 'BUSINESS_DEBT', 'CREDIT', 'VOLATILITY', 'FINCOND', 'LEVERAGE', 'RATES', 'BANKING', 'USD', 'TREASURY_AUCTION', 'FOREIGN_TREASURY_DEMAND', 'GROWTH', 'LABOR', 'HOUSING'],"
+          if old_us_factors in js:
+              js = js.replace(old_us_factors, new_us_factors, 1)
+
+          assert 'NODE_LABELS[name] || name' in js, 'legacy NODE_LABELS references were not found'
+          js = js.replace('NODE_LABELS[name] || name', 'factorLabel(config, name)')
+          assert 'NODE_LABELS' not in js, 'legacy NODE_LABELS reference remains'
+
+          old_worker = 'let workerWasRunning = false;'
+          new_worker = """let workerWasRunning = false;
+          let dashboardErrors = [];
+          let collectionErrors = [];"""
+          if old_worker in js and 'let dashboardErrors = [];' not in js:
+              js = js.replace(old_worker, new_worker, 1)
+
+          old_clear = 'function clear(node) { node.replaceChildren(); }'
+          new_clear = r'''function clear(node) { node.replaceChildren(); }
+          function updateErrorBanner() {
+            const banner = $('errorBanner');
+            const messages = [...dashboardErrors, ...collectionErrors];
+            banner.textContent = messages.join(' / ');
+            banner.hidden = messages.length === 0;
+          }'''
+          if old_clear in js and 'function updateErrorBanner()' not in js:
+              js = js.replace(old_clear, new_clear, 1)
+
+          start = js.index('function render(payload) {')
+          end = js.index('\n\nasync function loadDashboard()', start)
+          new_render = r'''function renderSafely(label, renderFn, errors) {
+            try {
+              renderFn();
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              errors.push(`${label}: ${message}`);
+            }
+          }
+
+          function render(payload) {
+            const indicators = indicatorMap(payload);
+            const errors = [];
+            renderSafely('상단 시세', () => renderTicker(indicators), errors);
+            renderSafely('종합 탭', () => renderOverview(payload, indicators), errors);
+            for (const config of Object.values(MARKET_CONFIG)) {
+              renderSafely(`${config.title} 탭`, () => renderMarket(config, payload, indicators), errors);
+            }
+            renderSafely('결과 시각', () => { $('lastUpdated').textContent = `RESULT ${formatTime(payload.snapshot?.as_of)}`; }, errors);
+            return errors;
+          }'''
+          js = js[:start] + new_render + js[end:]
+
+          start = js.index('async function loadDashboard() {')
+          end = js.index('\n\nasync function loadRefreshStatus()', start)
+          new_load_dashboard = r'''async function loadDashboard() {
+            let payload;
+            try {
+              const response = await fetch('/api/dashboard', { cache: 'no-store' });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              payload = await response.json();
+            } catch (error) {
+              $('connectionDot').className = 'status-dot offline';
+              $('connectionText').textContent = 'CONNECTION ERROR';
+              dashboardErrors = [`대시보드 API 실패: ${error.message}`];
+              updateErrorBanner();
+              return;
+            }
+
+            const renderErrors = render(payload);
+            dashboardErrors = renderErrors.map((error) => `화면 렌더링 실패: ${error}`);
+            if (renderErrors.length) {
+              $('connectionDot').className = 'status-dot offline';
+              $('connectionText').textContent = 'RENDER PARTIAL';
+            }
+            updateErrorBanner();
+          }'''
+          js = js[:start] + new_load_dashboard + js[end:]
+
+          start = js.index('async function loadRefreshStatus() {')
+          end = js.index('\n\nasync function requestRefresh()', start)
+          new_refresh_status = r'''async function loadRefreshStatus() {
+            const button = $('refreshButton');
+            try {
+              const response = await fetch('/api/refresh-status', { cache: 'no-store' });
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              const status = await response.json();
+              const running = Boolean(status.running || status.queued);
+              button.disabled = running;
+              button.textContent = running ? '최신 데이터 수집 중…' : '최신 데이터 수집';
+              collectionErrors = Array.isArray(status.errors)
+                ? status.errors.slice(0, 3).map((error) => `일부 데이터 수집 실패: ${error}`)
+                : [];
+              if (running) {
+                $('connectionDot').className = 'status-dot working';
+                $('connectionText').textContent = status.queued ? 'REFRESH QUEUED' : 'COLLECTING LIVE DATA';
+              } else {
+                $('connectionDot').className = dashboardErrors.length ? 'status-dot offline' : 'status-dot online';
+                $('connectionText').textContent = dashboardErrors.length
+                  ? 'RENDER PARTIAL'
+                  : collectionErrors.length
+                    ? `COMPLETE / ${collectionErrors.length} ERR`
+                    : 'AUTO REFRESH ONLINE';
+                if (workerWasRunning) await loadDashboard();
+              }
+              workerWasRunning = running;
+              updateErrorBanner();
+            } catch (error) {
+              button.disabled = false;
+              $('connectionDot').className = 'status-dot offline';
+              $('connectionText').textContent = 'STATUS ERROR';
+              collectionErrors = [`수집 상태 조회 실패: ${error.message}`];
+              updateErrorBanner();
+            }
+          }'''
+          js = js[:start] + new_refresh_status + js[end:]
+
+          start = js.index('async function requestRefresh() {')
+          end = js.index('\n\nfunction selectTab(name)', start)
+          new_request = r'''async function requestRefresh() {
+            const button = $('refreshButton');
+            button.disabled = true;
+            $('connectionText').textContent = 'REQUESTING REFRESH';
+            try {
+              const response = await fetch('/api/refresh', { method: 'POST', cache: 'no-store' });
+              if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
+              collectionErrors = [];
+              updateErrorBanner();
+              await loadRefreshStatus();
+            } catch (error) {
+              collectionErrors = [`최신 데이터 수집을 시작하지 못했습니다: ${error.message}`];
+              updateErrorBanner();
+              button.disabled = false;
+            }
+          }'''
+          js = js[:start] + new_request + js[end:]
+
+          js_path.write_text(js, encoding='utf-8')
+
+          smoke = r'''const fs = require('fs');
+          const vm = require('vm');
+
+          class FakeClassList {
+            add() {}
+            toggle() {}
+          }
+          class FakeStyle {
+            setProperty() {}
+          }
+          class FakeElement {
+            constructor(tag = 'div', id = '') {
+              this.tagName = tag;
+              this.id = id;
+              this.children = [];
+              this.hidden = false;
+              this.dataset = {};
+              this.className = '';
+              this.textContent = '';
+              this.style = new FakeStyle();
+              this.classList = new FakeClassList();
+            }
+            append(...nodes) { this.children.push(...nodes); }
+            replaceChildren(...nodes) { this.children = [...nodes]; }
+            setAttribute(name, value) { this[name] = String(value); }
+            addEventListener() {}
+          }
+
+          const ids = Object.fromEntries([
+            'connectionDot', 'connectionText', 'refreshButton', 'tickerTape', 'errorBanner',
+            'overviewAsOf', 'overviewGauges', 'marketLights', 'overviewQuotes', 'riskHeatmap',
+            'proprietarySignals', 'sourceHealth', 'usMarket', 'koreaMarket', 'cryptoMarket', 'lastUpdated'
+          ].map((id) => [id, new FakeElement('div', id)]));
+          const tabNames = ['overview', 'us', 'korea', 'crypto'];
+          const tabs = tabNames.map((name) => {
+            const node = new FakeElement('button');
+            node.dataset.tab = name;
+            return node;
+          });
+          const panels = tabNames.map((name) => new FakeElement('section', `tab-${name}`));
+          const asofs = [new FakeElement('span'), new FakeElement('span'), new FakeElement('span')];
+
+          const document = {
+            getElementById(id) { return ids[id] || panels.find((panel) => panel.id === id) || null; },
+            createElement(tag) { return new FakeElement(tag); },
+            createElementNS(_ns, tag) { return new FakeElement(tag); },
+            createTextNode(text) { return { textContent: String(text) }; },
+            querySelectorAll(selector) {
+              if (selector === '.tab-button') return tabs;
+              if (selector === '.tab-panel') return panels;
+              if (selector === '.market-asof') return asofs;
+              return [];
+            },
+            addEventListener() {}
+          };
+
+          const context = {
+            console,
+            document,
+            fetch: () => new Promise(() => {}),
+            setInterval: () => 0,
+            Intl,
+            Date,
+            Number,
+            Math,
+            Object,
+            Array,
+            String,
+            Boolean,
+            Error,
+            Promise
+          };
+          vm.createContext(context);
+          vm.runInContext(fs.readFileSync('src/dashboard.js', 'utf8'), context, { filename: 'dashboard.js' });
+
+          const payload = {
+            snapshot: {
+              as_of: '2026-08-21T07:00:00Z', global_risk: 42, confidence: 81, diffusion: 2,
+              stress: 35, vulnerability: 48, resilience: 61, stage: 1, data_quality: 82, rules_triggered: 17,
+              markets: { US_EQUITY: 41, KOREA_EQUITY: 37, CRYPTO: 53 },
+              nodes: {
+                VALUATION: 48, BUSINESS_DEBT: 42, CREDIT: 38, VOLATILITY: 32, FINCOND: 35,
+                LEVERAGE: 45, RATES: 39, BANKING: 28, TREASURY_AUCTION: 31,
+                FOREIGN_TREASURY_DEMAND: 36, GROWTH: 29, LABOR: 34, HOUSING: 40,
+                KOREA_FIN_STAB: 37, KOREA_MARKET_INTERNALS: 41, KOREA_MACRO: 33,
+                CRYPTO_DERIVATIVES: 55, USD: 44, LIQUIDITY: 46, FUNDING: 52
+              },
+              sources: { FRED: { fresh: true }, KRX: { fresh: true }, BINANCE: { fresh: true } }
+            },
+            dashboard: { indicators: [] }
+          };
+
+          const errors = context.render(payload);
+          if (errors.length) throw new Error(`render errors: ${errors.join(' | ')}`);
+          for (const id of ['overviewGauges', 'riskHeatmap', 'usMarket', 'koreaMarket', 'cryptoMarket']) {
+            if (!ids[id].children.length) throw new Error(`${id} rendered no children`);
+          }
+          context.selectTab('korea');
+          const koreaPanel = panels.find((panel) => panel.id === 'tab-korea');
+          const usPanel = panels.find((panel) => panel.id === 'tab-us');
+          if (koreaPanel.hidden || !usPanel.hidden) throw new Error('tab selection contract failed');
+          console.log('dashboard smoke test passed');
+          '''
+          Path('scripts').mkdir(exist_ok=True)
+          Path('scripts/dashboard_smoke.js').write_text(smoke, encoding='utf-8')
+
+          server_path = Path('src/server.rs')
+          server = server_path.read_text(encoding='utf-8')
+          if 'fn dashboard_assets_have_complete_render_contracts()' not in server:
+              test = r'''
+              #[test]
+              fn dashboard_assets_have_complete_render_contracts() {
+                  assert!(DASHBOARD_JS.contains("const NODE_META"));
+                  assert!(DASHBOARD_JS.contains("factorLabel"));
+                  assert!(DASHBOARD_JS.contains("renderSafely"));
+                  assert!(!DASHBOARD_JS.contains("NODE_LABELS"));
+                  for id in [
+                      "tickerTape",
+                      "overviewGauges",
+                      "marketLights",
+                      "overviewQuotes",
+                      "riskHeatmap",
+                      "proprietarySignals",
+                      "sourceHealth",
+                      "usMarket",
+                      "koreaMarket",
+                      "cryptoMarket",
+                  ] {
+                      assert!(
+                          DASHBOARD_HTML.contains(&format!("id=\"{id}\"")),
+                          "dashboard HTML is missing #{id}"
+                      );
+                  }
+              }
+
+          '''
+              anchor = '    #[test]\n    fn ticker_labels_expose_freshness_and_date() {'
+              assert anchor in server, 'server test anchor missing'
+              server = server.replace(anchor, test + anchor, 1)
+              server_path.write_text(server, encoding='utf-8')
+
+          for workflow in [Path('.github/workflows/ci.yml'), Path('.github/workflows/windows-release.yml')]:
+              text = workflow.read_text(encoding='utf-8')
+              if 'node scripts/dashboard_smoke.js' not in text:
+                  anchor = '      - uses: dtolnay/rust-toolchain@stable\n'
+                  assert anchor in text, f'workflow anchor missing in {workflow}'
+                  text = text.replace(
+                      anchor,
+                      '      - run: node --check src/dashboard.js\n      - run: node scripts/dashboard_smoke.js\n' + anchor,
+                      1,
+                  )
+                  workflow.write_text(text, encoding='utf-8')
+
+          cargo = Path('Cargo.toml').read_text(encoding='utf-8')
+          cargo = cargo.replace('version = "0.4.4"', 'version = "0.4.5"', 1)
+          Path('Cargo.toml').write_text(cargo, encoding='utf-8')
+          lock = Path('Cargo.lock').read_text(encoding='utf-8')
+          lock = lock.replace('name = "economics-radar"\nversion = "0.4.4"', 'name = "economics-radar"\nversion = "0.4.5"', 1)
+          Path('Cargo.lock').write_text(lock, encoding='utf-8')
+          PY
+      - name: JavaScript syntax check
+        run: node --check src/dashboard.js
+      - name: Dashboard runtime smoke test
+        run: node scripts/dashboard_smoke.js
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-targets --all-features
+      - run: cargo run -- rulebook
+      - name: Commit audited fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/dashboard-runtime-fix.yml
+          git add -- src/dashboard.js src/server.rs scripts/dashboard_smoke.js .github/workflows/ci.yml .github/workflows/windows-release.yml Cargo.toml Cargo.lock
+          git commit -m "fix: harden dashboard rendering across all market tabs"
+          git push origin HEAD:fix/dashboard-runtime-v0.4.5
