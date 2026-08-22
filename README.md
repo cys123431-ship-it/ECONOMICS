@@ -1,8 +1,25 @@
 # ECONOMICS Radar
 
-> v0.4.7: RFC3339 timestamp normalization hotfix on top of the v0.4.6 data-integrity release.
+> v0.5.0: Bloomberg-density raw market terminal and deterministic crisis-exit control room.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.5.0
+
+v0.5.0은 종합·미국·한국·코인 탭을 원본값 중심의 고밀도 터미널로 확장하고, “위기 탈출 목표 접근도”를 원본 위험 구성요소와 함께 보여 줍니다.
+
+- 화면 지표 31개에서 113개로 확대: 미국 39개, 한국 56개, 코인 19개 행(공통 항목 포함)
+- 모든 상세 행에 표시값, `RAW` 원본 숫자, 출처·시계열 ID, 관측시각, 발표주기, 신선도, 최근 범위·위치 표시
+- 미국 주식·금리·신용·금융여건·고용·은행·연준 유동성·국채입찰·딜러 시장 패널 추가
+- KRX 승인 데이터의 주식 시장규모·시장폭·선물·옵션·채권·ETF·ETN·ELW·금·석유·배출권·ESG·SRI·코넥스 패널 추가
+- 중복합산 KRX 지수총액, 의미 없는 개별주식선물 평균 베이시스, 갱신 중단 옵션 P/C는 화면에서 제외
+- Binance 현물 시간봉·24시간 고가/저가/거래량/거래대금과 무기한선물 mark/index/funding 원본 수집
+- 기존 `BTC_PRICE_USD`가 Binance 무기한선물 가격이었다는 의미를 바로잡고 현물 `BTC_SPOT_PRICE_USD`를 분리
+- BTC OI 24시간 변화 백분위, 가격 모멘텀·신고가, 펀딩·베이시스·상위포지션·테이커 z-score를 규칙 엔진 문맥에 구현
+- 종합·미국·한국·코인의 탈출 조건을 `≤35 통과`, `≥55 차단`, `≥75 핵심차단`, 결측으로 구분
+- 단일 시점은 “탈출 확정”으로 과장하지 않고, 저장된 7일 전(코인은 24시간 전) 스냅샷이 있을 때만 개선·악화 추세 표시
+- 금리·수익률·비율의 변화는 잘못된 퍼센트 변화 대신 `pp`/포인트로 표시
+- 수집 오류의 전체 URL을 화면에 노출하지 않고 짧은 소스·HTTP 상태와 직전값 유지 여부만 표시
 
 ## v0.4.7
 
@@ -82,7 +99,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.4.7-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.5.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env

@@ -703,6 +703,7 @@ pub fn collect_binance(config: &Config, db: &Db) -> Result<CollectionReport, Box
     let http = client(config)?;
     let mut report = CollectionReport::default();
     collect_binance_price(&http, db, &mut report);
+    collect_binance_spot_history(&http, db, &mut report);
     for request in [
         BinanceRequest::array(
             "funding",
@@ -940,40 +941,170 @@ fn collect_binance_price(http: &Client, db: &Db, report: &mut CollectionReport) 
     }
 }
 
-fn collect_binance_live_with_client(http: &Client, db: &Db, report: &mut CollectionReport) {
+fn collect_binance_spot_history(http: &Client, db: &Db, report: &mut CollectionReport) {
+    let limit = if db
+        .latest("binance", "BTC_SPOT_PRICE_USD", None)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        5
+    } else {
+        500
+    };
+    let url =
+        format!("https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=1h&limit={limit}");
     let value = match http
-        .get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT")
+        .get(&url)
         .send()
         .and_then(|response| response.error_for_status())
         .and_then(|response| response.json::<Value>())
     {
         Ok(value) => value,
         Err(error) => {
-            report.error("live-price", error);
+            report.error("spot-price-history", error);
             return;
         }
     };
-    let Some(price) = parse_number(value.get("price")) else {
-        report.error("live-price", "price missing");
+    let Some(rows) = value.as_array() else {
+        report.error("spot-price-history", "expected JSON array");
         return;
     };
-    let observed_at = parse_millis(value.get("time"))
-        .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+    for row in rows {
+        let Some(fields) = row.as_array() else {
+            continue;
+        };
+        let Some(close_millis) = fields.get(6).and_then(|value| match value {
+            Value::Number(value) => value.as_i64(),
+            Value::String(value) => value.parse().ok(),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if close_millis >= Utc::now().timestamp_millis() {
+            continue;
+        }
+        let Some(timestamp) = parse_millis(fields.get(6)) else {
+            continue;
+        };
+        let Some(price) = fields.get(4).and_then(|value| parse_number(Some(value))) else {
+            continue;
+        };
+        report.record(db.put(&NewObservation {
+            source: "binance".into(),
+            series: "BTC_SPOT_PRICE_USD".into(),
+            entity: "BTCUSDT".into(),
+            observed_at: timestamp.clone(),
+            value: price,
+            released_at: Some(timestamp.clone()),
+            source_asof: Some(timestamp.clone()),
+            revision_id: Some(format!("{timestamp}:{price:.17}")),
+            metadata: json!({"symbol":"BTCUSDT","market":"spot","endpoint":"hourly-klines","closed":true}),
+        }));
+    }
+}
+
+fn put_binance_live(
+    db: &Db,
+    report: &mut CollectionReport,
+    series: &str,
+    value: f64,
+    observed_at: &str,
+    endpoint: &str,
+) {
     report.attempted += 1;
     match db.put_live_quote(&NewObservation {
         source: "binance".into(),
-        series: "BTC_PRICE_USD".into(),
+        series: series.into(),
         entity: "BTCUSDT".into(),
-        observed_at: observed_at.clone(),
-        value: price,
-        released_at: Some(observed_at.clone()),
-        source_asof: Some(observed_at),
+        observed_at: observed_at.into(),
+        value,
+        released_at: Some(observed_at.into()),
+        source_asof: Some(observed_at.into()),
         revision_id: None,
-        metadata: json!({"symbol":"BTCUSDT","endpoint":"ticker-price","live":true}),
+        metadata: json!({"symbol":"BTCUSDT","endpoint":endpoint,"live":true}),
     }) {
         Ok(true) => report.stored += 1,
         Ok(false) => report.unchanged += 1,
-        Err(error) => report.error("live-price", format!("database: {error}")),
+        Err(error) => report.error(endpoint, format!("database: {error}")),
+    }
+}
+
+fn collect_binance_live_with_client(http: &Client, db: &Db, report: &mut CollectionReport) {
+    match http
+        .get("https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT")
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<Value>())
+    {
+        Ok(value) => {
+            let observed_at = parse_millis(value.get("closeTime"))
+                .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+            for (series, field) in [
+                ("BTC_SPOT_PRICE_USD", "lastPrice"),
+                ("BTC_SPOT_HIGH_24H", "highPrice"),
+                ("BTC_SPOT_LOW_24H", "lowPrice"),
+                ("BTC_SPOT_VOLUME_24H", "volume"),
+                ("BTC_SPOT_QUOTE_VOLUME_24H", "quoteVolume"),
+                ("BTC_SPOT_CHANGE_24H", "priceChangePercent"),
+            ] {
+                if let Some(number) = parse_number(value.get(field)) {
+                    put_binance_live(db, report, series, number, &observed_at, "spot-24hr");
+                } else {
+                    report.error("spot-24hr", format!("{field} missing"));
+                }
+            }
+        }
+        Err(error) => report.error("spot-24hr", error),
+    }
+
+    match http
+        .get("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT")
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<Value>())
+    {
+        Ok(value) => {
+            let observed_at = parse_millis(value.get("time"))
+                .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+            for (series, field) in [
+                ("BTC_MARK_PRICE_USD", "markPrice"),
+                ("BTC_INDEX_PRICE_USD", "indexPrice"),
+                ("BTC_CURRENT_FUNDING_RATE", "lastFundingRate"),
+            ] {
+                if let Some(number) = parse_number(value.get(field)) {
+                    put_binance_live(db, report, series, number, &observed_at, "premium-index");
+                } else {
+                    report.error("premium-index", format!("{field} missing"));
+                }
+            }
+        }
+        Err(error) => report.error("premium-index", error),
+    }
+
+    match http
+        .get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT")
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<Value>())
+    {
+        Ok(value) => {
+            if let Some(price) = parse_number(value.get("price")) {
+                let observed_at = parse_millis(value.get("time"))
+                    .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+                put_binance_live(
+                    db,
+                    report,
+                    "BTC_PRICE_USD",
+                    price,
+                    &observed_at,
+                    "perpetual-price",
+                );
+            } else {
+                report.error("perpetual-price", "price missing");
+            }
+        }
+        Err(error) => report.error("perpetual-price", error),
     }
 }
 

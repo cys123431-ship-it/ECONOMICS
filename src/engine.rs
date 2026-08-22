@@ -954,6 +954,7 @@ pub fn run_at(
     if let Some(risk) = context.value("METRIC_RISK:KRX_PUT_CALL") {
         context.insert_bool("KRX_PUT_CALL_EXTREME", risk >= 90.0);
     }
+    enrich_crypto_rule_context(db, &mut context, as_of)?;
 
     let mut nodes = HashMap::new();
     let mut node_axes: HashMap<String, HashSet<Axis>> = HashMap::new();
@@ -1141,6 +1142,131 @@ pub fn run_at(
         db.save_snapshot(&snapshot)?;
     }
     Ok(snapshot)
+}
+
+fn observation_values(db: &Db, series: &str, as_of: &str) -> Result<Vec<f64>, rusqlite::Error> {
+    Ok(db
+        .recent("binance", series, 512, Some(as_of))?
+        .into_iter()
+        .map(|point| point.value)
+        .collect())
+}
+
+fn lagged_percent_changes(values: &[f64], lag: usize) -> Vec<f64> {
+    if values.len() <= lag {
+        return Vec::new();
+    }
+    (lag..values.len())
+        .filter_map(|index| {
+            let prior = values[index - lag];
+            (prior.abs() > f64::EPSILON).then(|| 100.0 * (values[index] - prior) / prior.abs())
+        })
+        .collect()
+}
+
+fn z_score(history: &[f64], current: f64) -> Option<f64> {
+    if history.len() < 20 {
+        return None;
+    }
+    let mean = history.iter().sum::<f64>() / history.len() as f64;
+    let variance = history
+        .iter()
+        .map(|value| (value - mean).powi(2))
+        .sum::<f64>()
+        / history.len() as f64;
+    let deviation = variance.sqrt();
+    (deviation > f64::EPSILON).then(|| (current - mean) / deviation)
+}
+
+fn rolling_z_scores(values: &[f64]) -> Vec<f64> {
+    let mut scores = Vec::new();
+    for index in 20..values.len() {
+        let start = index.saturating_sub(120);
+        if let Some(score) = z_score(&values[start..index], values[index]) {
+            scores.push(score);
+        }
+    }
+    scores
+}
+
+fn insert_z_metric(context: &mut Context, name: &str, values: &[f64]) {
+    let scores = rolling_z_scores(values);
+    let Some(current) = scores.last().copied() else {
+        return;
+    };
+    let history = scores[..scores.len() - 1].to_vec();
+    let risk = scoring::percentile_rank(
+        &history.iter().map(|value| value.abs()).collect::<Vec<_>>(),
+        current.abs(),
+    );
+    context.insert_signal(
+        name,
+        Signal {
+            current: Some(current),
+            history,
+        },
+    );
+    if let Some(risk) = risk {
+        context.insert_number(format!("METRIC_RISK:{name}"), risk);
+    }
+}
+
+fn enrich_crypto_rule_context(
+    db: &Db,
+    context: &mut Context,
+    as_of: &str,
+) -> Result<(), rusqlite::Error> {
+    let prices = observation_values(db, "BTC_PRICE_USD", as_of)?;
+    let oi = observation_values(db, "BTC_OI", as_of)?;
+    let funding = observation_values(db, "BTC_FUNDING_RATE", as_of)?;
+    let basis = observation_values(db, "BTC_BASIS_RATE", as_of)?;
+    let top_position = observation_values(db, "BTC_TOP_POSITION_RATIO", as_of)?;
+    let taker = observation_values(db, "BTC_TAKER_RATIO", as_of)?;
+
+    let oi_changes = lagged_percent_changes(&oi, 24);
+    let oi_ranks = (20..oi_changes.len())
+        .filter_map(|index| {
+            let start = index.saturating_sub(120);
+            scoring::percentile_rank(&oi_changes[start..index], oi_changes[index])
+        })
+        .collect::<Vec<_>>();
+    if let Some(rank) = oi_ranks.last().copied() {
+        context.insert_signal(
+            "BTC_OI_CHANGE",
+            Signal {
+                current: Some(rank),
+                history: oi_ranks[..oi_ranks.len() - 1].to_vec(),
+            },
+        );
+        context.insert_number("METRIC_RISK:BTC_OI_CHANGE", rank);
+    }
+
+    let price_momentum = lagged_percent_changes(&prices, 24);
+    if let Some(current) = price_momentum.last().copied() {
+        context.insert_signal(
+            "BTC_PRICE_MOMENTUM",
+            Signal {
+                current: Some(current),
+                history: price_momentum,
+            },
+        );
+    }
+    if prices.len() >= 169 {
+        let current = *prices.last().unwrap_or(&0.0);
+        let prior_high = prices[prices.len() - 169..prices.len() - 1]
+            .iter()
+            .copied()
+            .reduce(f64::max);
+        if let Some(prior_high) = prior_high {
+            context.insert_bool("BTC_PRICE_NEW_HIGH", current > prior_high);
+        }
+    }
+
+    insert_z_metric(context, "BTC_FUNDING_Z", &funding);
+    insert_z_metric(context, "BTC_BASIS_Z", &basis);
+    insert_z_metric(context, "BTC_TOPTRADER_LS_Z", &top_position);
+    insert_z_metric(context, "BTC_TAKER_IMBALANCE_Z", &taker);
+    Ok(())
 }
 
 fn enrich_node_context(nodes: &HashMap<String, f64>, context: &mut Context) {
@@ -1527,6 +1653,23 @@ mod tests {
             transform_points(&points, Transform::PercentChange),
             vec![100.0, -50.0]
         );
+    }
+
+    #[test]
+    fn crypto_lagged_change_uses_24_observations_without_fabrication() {
+        let values = (100..=124).map(f64::from).collect::<Vec<_>>();
+        let changes = lagged_percent_changes(&values, 24);
+        assert_eq!(changes.len(), 1);
+        assert!((changes[0] - 24.0).abs() < 1e-9);
+        assert!(lagged_percent_changes(&values[..24], 24).is_empty());
+    }
+
+    #[test]
+    fn crypto_z_score_requires_history_and_preserves_direction() {
+        assert_eq!(z_score(&[1.0; 19], 2.0), None);
+        let history = (0..30).map(f64::from).collect::<Vec<_>>();
+        assert!(z_score(&history, 40.0).is_some_and(|value| value > 0.0));
+        assert!(z_score(&history, -10.0).is_some_and(|value| value < 0.0));
     }
 
     #[test]

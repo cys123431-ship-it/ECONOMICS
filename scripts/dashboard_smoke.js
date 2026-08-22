@@ -48,6 +48,8 @@ const ids = Object.fromEntries([
   'overviewGauges',
   'marketLights',
   'overviewQuotes',
+  'overviewRecovery',
+  'overviewMarketMatrix',
   'riskHeatmap',
   'proprietarySignals',
   'sourceHealth',
@@ -188,6 +190,27 @@ if (koreaPanel.hidden || !usPanel.hidden) {
 
 if (fs.readFileSync('src/dashboard.js', 'utf8').includes('NODE_LABELS')) {
   throw new Error('legacy NODE_LABELS reference remains');
+}
+
+const recoveryFixture = (risk) => ({
+  snapshot: {
+    global_risk: risk,
+    stress: risk,
+    vulnerability: risk,
+    resilience: 100 - risk,
+    markets: { US_EQUITY: risk, KOREA_EQUITY: risk, CRYPTO: risk },
+    nodes: {}
+  },
+  snapshot_history: {}
+});
+for (const [risk, expected] of [[75, 0], [55, 50], [35, 100], [90, 0], [20, 100]]) {
+  const model = context.recoveryModel('overall', recoveryFixture(risk));
+  if (model.progress !== expected) {
+    throw new Error(`recovery progress ${risk}: expected ${expected}, got ${model.progress}`);
+  }
+}
+if (context.recoveryModel('us', { snapshot: { markets: {}, nodes: {} } }).progress !== null) {
+  throw new Error('insufficient recovery coverage must stay null');
 }
 
 console.log('dashboard smoke test passed');

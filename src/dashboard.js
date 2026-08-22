@@ -5,8 +5,8 @@ function $(id) {
 }
 
 const NODE_META = {
-  VALUATION: { label: '주식 밸류에이션', market: 'us' },
-  BUSINESS_DEBT: { label: '기업부채', market: 'us' },
+  VALUATION: { label: '미국 주식 가격·밸류에이션', market: 'us' },
+  BUSINESS_DEBT: { label: '미국 대출·연체 취약성', market: 'us' },
   CREDIT: { label: '신용시장', market: 'us' },
   VOLATILITY: { label: '시장 변동성', market: 'us' },
   FINCOND: { label: '금융여건', market: 'us' },
@@ -36,8 +36,8 @@ const HEATMAP_MARKETS = {
 
 const FACTOR_LABEL_OVERRIDES = {
   us: {
-    VALUATION: '미국 주식 밸류에이션',
-    BUSINESS_DEBT: '미국 기업부채',
+    VALUATION: '미국 주식 가격·밸류에이션',
+    BUSINESS_DEBT: '미국 대출·연체 취약성',
     CREDIT: '미국 신용시장',
     VOLATILITY: '미국 시장 변동성',
     FINCOND: '미국 금융여건',
@@ -82,9 +82,14 @@ const MARKET_CONFIG = {
       'GROWTH', 'LABOR', 'HOUSING'
     ],
     sections: [
-      ['주식·공포지수', 'EQUITY / VOL', ['sp500', 'nasdaq', 'dow', 'vix']],
-      ['채권·금리', 'RATES / CREDIT', ['us10y', 'us2y', 'curve_10y2y', 'hy_spread', 'treasury_bid_cover']],
-      ['달러·금융환경', 'FX / CONDITIONS', ['usd_index', 'usdkrw']]
+      ['미국 주식·옵션 공포', 'US EQUITY / VOL', ['sp500', 'nasdaq', 'dow', 'vix']],
+      ['미국 국채금리·수익률곡선', 'US RATES / CURVE', ['us10y', 'us2y', 'curve_10y2y', 'curve_10y3m']],
+      ['미국 신용스프레드·금융여건', 'US CREDIT / CONDITIONS', ['hy_spread', 'ig_spread', 'ofr_fsi', 'stlfsi', 'nfci', 'anfci', 'nfci_leverage']],
+      ['미국 성장·고용 선행지표', 'US GROWTH / LABOR', ['wei', 'cfnai', 'sahm', 'initial_claims', 'continued_claims']],
+      ['미국 주택·은행·대출건전성', 'US HOUSING / BANKING', ['mortgage30', 'card_delinquency', 'loan_delinquency', 'bank_capital']],
+      ['연준 유동성·은행대출', 'FED LIQUIDITY / CREDIT', ['fed_assets', 'rrp', 'total_reserves', 'reserve_balances', 'business_loans', 'total_loans']],
+      ['미 국채 입찰·딜러·담보조건', 'TREASURY / PLUMBING', ['treasury_bid_cover', 'auction_dealer', 'auction_direct', 'auction_indirect', 'dealer_fails', 'margin_tightening']],
+      ['달러·글로벌 달러신용', 'USD / GLOBAL CREDIT', ['usd_index', 'usdkrw', 'global_dollar_credit']]
     ]
   },
   korea: {
@@ -93,10 +98,14 @@ const MARKET_CONFIG = {
     target: 'koreaMarket',
     factors: ['KOREA_FIN_STAB', 'KOREA_MARKET_INTERNALS', 'KOREA_MACRO', 'USD', 'LIQUIDITY', 'CREDIT', 'BANKING', 'RATES'],
     sections: [
-      ['주식·환율', 'EQUITY / FX', ['kospi', 'kosdaq', 'usdkrw', 'kr_base_rate']],
-      ['시장폭·수급', 'BREADTH / INTERNALS', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth']],
-      ['선물·옵션', 'FUTURES / OPTIONS', ['krx_basis', 'krx_futures_oi', 'krx_put_call', 'krx_option_iv']],
-      ['채권', 'FIXED INCOME', ['krx_bond_yield', 'krx_kts_yield']]
+      ['한국 주가지수·공식 등락률·환율', 'KR EQUITY / FX', ['kospi', 'kospi_return', 'kosdaq', 'kosdaq_return', 'usdkrw', 'kr_base_rate']],
+      ['한국 시장 내부체력·외부수요', 'KR BREADTH / MACRO', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth', 'kr_cli', 'cn_cli']],
+      ['코스피·코스닥 시장규모', 'KR MARKET SCALE', ['kospi_value', 'kosdaq_value', 'kospi_volume', 'kosdaq_volume', 'kospi_cap', 'kosdaq_cap', 'kospi_issues', 'kosdaq_issues']],
+      ['코스피200 선물·옵션 원본', 'K200 FUTURES / OPTIONS', ['krx_basis', 'krx_futures_oi', 'krx_futures_volume', 'krx_futures_value', 'krx_put_call', 'krx_option_iv', 'krx_options_oi', 'krx_options_volume', 'krx_options_value']],
+      ['한국 채권시장', 'KR FIXED INCOME', ['krx_bond_yield', 'krx_kts_yield', 'krx_bond_basket_yield', 'krx_small_bond_yield', 'krx_bond_duration', 'krx_bond_convexity', 'krx_bond_value', 'krx_kts_value']],
+      ['ETF·ETN·ELW 위험선호', 'KR ETP / LEVERAGED', ['etf_breadth', 'etf_value', 'etf_cap', 'etn_breadth', 'etn_value', 'etn_cap', 'elw_breadth', 'elw_value']],
+      ['금·석유·배출권 실물시장', 'KR COMMODITIES / ETS', ['gold_value', 'gold_volume', 'oil_price', 'oil_value', 'emissions_breadth', 'emissions_value']],
+      ['ESG·SRI·코넥스 보조시장', 'KR SECONDARY MARKETS', ['esg_breadth', 'esg_index_return', 'sri_issues', 'sri_amount', 'konex_breadth', 'konex_cap']]
     ]
   },
   crypto: {
@@ -105,11 +114,57 @@ const MARKET_CONFIG = {
     target: 'cryptoMarket',
     factors: ['CRYPTO_DERIVATIVES', 'LIQUIDITY', 'USD', 'LEVERAGE', 'VOLATILITY', 'FUNDING'],
     sections: [
-      ['비트코인 현물', 'SPOT', ['btc']],
-      ['선물·펀딩', 'FUTURES / FUNDING', ['btc_funding', 'btc_oi', 'btc_basis']],
-      ['포지셔닝·주문흐름', 'POSITIONING / FLOW', ['btc_global_ls', 'btc_top_position', 'btc_top_account', 'btc_taker']]
+      ['비트코인 현물 24시간 원본', 'BTC SPOT / 24H', ['btc', 'btc_spot_change', 'btc_spot_high', 'btc_spot_low', 'btc_spot_volume', 'btc_spot_quote_volume']],
+      ['BTC 무기한선물 가격·미결제약정', 'BTC PERPETUAL / OI', ['btc_perp_price', 'btc_mark_price', 'btc_index_price', 'btc_oi']],
+      ['BTC 펀딩·베이시스 방향과 위험크기', 'BTC FUNDING / BASIS', ['btc_current_funding', 'btc_funding', 'btc_funding_abs', 'btc_basis', 'btc_basis_abs']],
+      ['BTC 전체·상위계정 포지셔닝', 'BTC POSITIONING', ['btc_global_ls', 'btc_top_position', 'btc_top_account']],
+      ['BTC 공격적 주문흐름', 'BTC TAKER FLOW', ['btc_taker']]
     ]
   }
+};
+
+const RECOVERY_CONFIG = {
+  overall: {
+    title: '종합', riskKey: 'global_risk', prior: 'week',
+    conditions: [
+      ['stress', '시장 스트레스'], ['vulnerability', '구조적 취약성'],
+      ['resilience_risk', '회복탄력성 부족'], ['US_EQUITY', '미국 시장 위험'],
+      ['KOREA_EQUITY', '한국 시장 위험'], ['CRYPTO', '코인 시장 위험']
+    ]
+  },
+  us: {
+    title: '미국', riskKey: 'US_EQUITY', prior: 'week',
+    conditions: [['VALUATION', '주식 가격·밸류에이션'], ['CREDIT', '신용시장'], ['VOLATILITY', '변동성'], ['FINCOND', '금융여건'], ['LEVERAGE', '레버리지']]
+  },
+  korea: {
+    title: '한국', riskKey: 'KOREA_EQUITY', prior: 'week',
+    conditions: [['KOREA_FIN_STAB', '금융안정'], ['KOREA_MARKET_INTERNALS', '시장 내부수급'], ['KOREA_MACRO', '거시경제'], ['USD', '달러·원화 외부압력']]
+  },
+  crypto: {
+    title: '코인', riskKey: 'CRYPTO', prior: 'day',
+    conditions: [['CRYPTO_DERIVATIVES', '코인 파생시장'], ['LIQUIDITY', '글로벌 유동성'], ['USD', '달러 압력']]
+  }
+};
+
+const INDICATOR_RULES = {
+  vix: [25, 35, '20 미만이면 공포 완화', true],
+  hy_spread: [4.5, 5, '4.5% 미만·5일 축소가 탈출 확인', true],
+  ig_spread: [1.2, 1.8, '하락 안정이 신용 정상화', true],
+  ofr_fsi: [0, 1, '0 미만 10거래일이 안정 조건', true],
+  stlfsi: [0, 1, '0 미만이면 장기평균보다 안정', true],
+  nfci: [0, 0.5, '0 미만이면 금융여건 완화', true],
+  anfci: [0, 0.5, '0 미만이면 경제여건 대비 완화', true],
+  sahm: [0.5, 0.75, '0.50%p 미만이 침체신호 해제 조건', true],
+  kospi_breadth: [40, 25, '50% 이상 3일이 내부체력 회복', false],
+  kosdaq_breadth: [40, 25, '50% 이상 3일이 내부체력 회복', false],
+  krx_breadth: [40, 25, '50% 이상이면 상승 확산', false],
+  etf_breadth: [40, 25, '50% 이상이면 ETF 위험선호 회복', false],
+  etn_breadth: [40, 25, '50% 이상이면 ETN 확산 회복', false],
+  krx_basis: [0, -5, '0p 이상 3일이면 선물 위험회피 완화', false],
+  krx_put_call: [1.2, 1.6, '중앙 범위 복귀가 옵션 공포 완화', true],
+  krx_option_iv: [45, 65, '최근 범위 60백분위 아래가 완화', true],
+  curve_10y2y: [0.25, 0, '+0.25%p 이상 지속 시 곡선 정상화', false],
+  curve_10y3m: [0.25, 0, '+0.25%p 이상 지속 시 곡선 정상화', false]
 };
 
 const TICKER_KEYS = ['usdkrw', 'btc', 'sp500', 'nasdaq', 'dow', 'kospi', 'kosdaq'];
@@ -195,8 +250,28 @@ function formatValue(indicator) {
       return `${value.toFixed(digits)}%`;
     case 'rate':
       return `${(value * 100).toFixed(digits)}%`;
+    case 'fraction_percent':
+      return `${(value * 100).toFixed(digits)}%`;
+    case 'usd_million':
+      return value >= 1e6
+        ? `$${(value / 1e6).toFixed(2)}조`
+        : `$${(value / 1e3).toFixed(2)}십억`;
+    case 'usd_billion':
+      return value >= 1e3
+        ? `$${(value / 1e3).toFixed(2)}조`
+        : `$${value.toFixed(digits)}십억`;
+    case 'krw_amount':
+      return Math.abs(value) >= 1e12
+        ? `₩${(value / 1e12).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}조`
+        : `₩${(value / 1e8).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}억`;
     case 'contracts':
       return compact(value, 2);
+    case 'count':
+      return compact(value, 2);
+    case 'btc':
+      return `${compact(value, 2)} BTC`;
+    case 'years':
+      return `${value.toFixed(digits)}년`;
     case 'ratio':
       return value.toFixed(digits);
     case 'points':
@@ -215,12 +290,48 @@ function formatChange(indicator) {
   if (!indicator || finite(indicator.value) === null) return 'NO DATA';
   const pct = finite(indicator.change_pct);
   const change = finite(indicator.change);
-  if (pct !== null && !['percent', 'rate', 'ratio'].includes(indicator.unit)) {
+  if (pct !== null && !['percent', 'rate', 'ratio', 'points', 'fraction_percent'].includes(indicator.unit)) {
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
   }
   if (change === null) return '—';
-  const adjusted = indicator.unit === 'rate' ? change * 100 : change;
-  return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}`;
+  const adjusted = ['rate', 'fraction_percent'].includes(indicator.unit) ? change * 100 : change;
+  const suffix = indicator.unit === 'percent' || indicator.unit === 'rate' || indicator.unit === 'fraction_percent'
+    ? 'pp'
+    : indicator.unit === 'points' ? 'p' : '';
+  return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}${suffix}`;
+}
+
+function conciseCollectionError(error) {
+  const message = String(error || '알 수 없는 오류');
+  const source = message.split(':')[0] || '데이터';
+  const status = message.match(/status code (\d+)|HTTP\s*(\d+)/i);
+  const code = status?.[1] || status?.[2];
+  return `${source} 갱신 지연${code ? ` (HTTP ${code})` : ''} · 직전 정상값 유지`;
+}
+
+function rawValue(indicator) {
+  const value = finite(indicator?.raw_value ?? indicator?.value);
+  if (value === null) return 'RAW —';
+  return `RAW ${value.toLocaleString('en-US', { maximumFractionDigits: 12, useGrouping: false })} [${indicator.unit || 'number'}]`;
+}
+
+function indicatorReading(indicator) {
+  const value = finite(indicator?.value);
+  if (value === null) return { key: 'unknown', label: 'DATA WAIT', hint: '결측값은 정상으로 간주하지 않습니다.' };
+  const rule = INDICATOR_RULES[indicator.key];
+  if (rule) {
+    const [warning, danger, hint, highBad] = rule;
+    const dangerHit = highBad ? value >= danger : value <= danger;
+    const warningHit = highBad ? value >= warning : value <= warning;
+    return {
+      key: dangerHit ? 'red' : warningHit ? 'amber' : 'green',
+      label: dangerHit ? '위험구간' : warningHit ? '주의구간' : '정상범위',
+      hint
+    };
+  }
+  const pos = finite(indicator.range_position);
+  const position = pos === null ? '' : `최근 ${indicator.observations || 0}개 범위 ${pos.toFixed(0)}% 위치.`;
+  return { key: 'neutral', label: '원본 관측', hint: position || '방향은 다른 지표와 함께 해석합니다.' };
 }
 
 function riskState(value) {
@@ -432,6 +543,47 @@ function renderOverview(payload, indicators) {
   renderRiskHeatmap(snapshot.nodes || {});
   renderProprietary(snapshot);
   renderSources(snapshot.sources || {});
+  renderOverviewRecovery(payload);
+  renderOverviewMatrix(indicators);
+}
+
+function renderOverviewRecovery(payload) {
+  const container = $('overviewRecovery');
+  clear(container);
+  for (const name of ['overall', 'us', 'korea', 'crypto']) {
+    container.append(recoveryCard(recoveryModel(name, payload), true));
+  }
+  const note = el('p', 'recovery-disclaimer', '단일 시점 통과는 “탈출 확정”이 아닙니다. 종합·미국·한국은 7일, 코인은 24시간 전 저장 스냅샷과 비교하며 결측 조건은 통과로 세지 않습니다.');
+  container.append(note);
+}
+
+function renderOverviewMatrix(indicators) {
+  const container = $('overviewMarketMatrix');
+  clear(container);
+  const groups = [
+    ['미국', ['sp500', 'vix', 'us10y', 'curve_10y2y', 'hy_spread', 'ofr_fsi']],
+    ['한국', ['kospi', 'kosdaq', 'usdkrw', 'krx_breadth', 'krx_basis', 'krx_option_iv']],
+    ['코인', ['btc', 'btc_spot_change', 'btc_oi', 'btc_current_funding', 'btc_basis', 'btc_taker']]
+  ];
+  for (const [title, keys] of groups) {
+    const group = el('section', 'matrix-group');
+    group.append(el('h3', '', title));
+    for (const key of keys) {
+      const indicator = indicators[key] || { key, symbol: key.toUpperCase(), label: key, value: null };
+      const reading = indicatorReading(indicator);
+      const row = el('div', 'matrix-row');
+      const label = el('div');
+      label.append(el('strong', '', indicator.symbol), el('small', '', indicator.label));
+      row.append(
+        label,
+        el('b', '', formatValue(indicator)),
+        el('span', direction(indicator), `${indicator.change_period || ''} ${formatChange(indicator)}`),
+        el('em', reading.key, reading.label)
+      );
+      group.append(row);
+    }
+    container.append(group);
+  }
 }
 
 function renderRiskHeatmap(nodes) {
@@ -535,6 +687,85 @@ function renderSources(sources) {
   }
 }
 
+function recoveryValue(snapshot, key) {
+  if (!snapshot) return null;
+  if (key === 'stress' || key === 'vulnerability') return finite(snapshot[key]);
+  if (key === 'resilience_risk') {
+    const resilience = finite(snapshot.resilience);
+    return resilience === null ? null : 100 - resilience;
+  }
+  if (Object.prototype.hasOwnProperty.call(snapshot.markets || {}, key)) {
+    return finite(snapshot.markets[key]);
+  }
+  return finite(snapshot.nodes?.[key]);
+}
+
+function recoveryRisk(snapshot, config) {
+  if (!snapshot) return null;
+  if (config.riskKey === 'global_risk') return finite(snapshot.global_risk);
+  return finite(snapshot.markets?.[config.riskKey]);
+}
+
+function recoveryModel(name, payload) {
+  const config = RECOVERY_CONFIG[name];
+  const current = payload.snapshot || {};
+  const prior = payload.snapshot_history?.[config.prior] || null;
+  const risk = recoveryRisk(current, config);
+  const priorRisk = recoveryRisk(prior, config);
+  const delta = risk === null || priorRisk === null ? null : risk - priorRisk;
+  const conditions = config.conditions.map(([key, label]) => {
+    const value = recoveryValue(current, key);
+    return {
+      key, label, value,
+      state: value === null ? 'unknown' : value >= 75 ? 'critical' : value >= 55 ? 'blocked' : value <= 35 ? 'met' : 'watch'
+    };
+  });
+  const known = conditions.filter((item) => item.value !== null).length;
+  const coverage = known / Math.max(conditions.length, 1);
+  const met = conditions.filter((item) => item.state === 'met').length;
+  const blocked = conditions.filter((item) => ['blocked', 'critical'].includes(item.state)).length;
+  const progress = risk === null || coverage < 0.6
+    ? null
+    : clamp((75 - risk) / 40 * 100);
+  let phase = '판단 데이터 부족';
+  if (risk !== null && coverage >= 0.6) {
+    phase = risk >= 75 ? '위기' : risk >= 55 ? '스트레스' : risk <= 35 ? '탈출 준비' : '회복 관찰';
+  }
+  const trend = delta === null
+    ? '추세 데이터 대기'
+    : delta <= -10 ? '빠르게 개선'
+      : delta <= -3 ? '개선'
+        : delta < 3 ? '정체'
+          : delta < 10 ? '악화' : '빠르게 악화';
+  return { name, config, risk, priorRisk, delta, conditions, known, coverage, met, blocked, progress, phase, trend };
+}
+
+function recoveryCard(model, compactMode = false) {
+  const card = el('article', `recovery-card phase-${model.phase.replaceAll(' ', '-')}`);
+  const head = el('div', 'recovery-head');
+  const title = el('div');
+  title.append(el('strong', '', `${model.config.title} · ${model.phase}`), el('small', '', `${model.trend} / 데이터 ${model.known}/${model.conditions.length}`));
+  head.append(title, el('b', '', model.progress === null ? '—' : `${model.progress.toFixed(0)}%`));
+  card.append(head);
+  const bar = el('div', 'recovery-progress');
+  const fill = el('i');
+  fill.style.width = `${model.progress ?? 0}%`;
+  bar.append(fill);
+  card.append(bar, el('p', 'recovery-caption', '위기 탈출 목표 접근도 · 모델 위험점수 35 이하 목표'));
+  const list = el('div', compactMode ? 'recovery-condition-grid compact' : 'recovery-condition-grid');
+  for (const condition of model.conditions) {
+    const row = el('div', `recovery-condition ${condition.state}`);
+    row.append(
+      el('span', '', condition.label),
+      el('strong', '', condition.value === null ? '—' : condition.value.toFixed(1)),
+      el('em', '', condition.state === 'met' ? '≤35 통과' : condition.state === 'critical' ? '≥75 핵심차단' : condition.state === 'blocked' ? '≥55 차단' : condition.state === 'watch' ? '관찰' : '결측')
+    );
+    list.append(row);
+  }
+  card.append(list);
+  return card;
+}
+
 function renderMarket(config, payload, indicators) {
   const snapshot = payload.snapshot || {};
   const container = $(config.target);
@@ -566,6 +797,17 @@ function renderMarket(config, payload, indicators) {
   lightArea.append(makeTrafficLight(state.key), el('strong', '', state.label));
   hero.append(gauge, summary, lightArea);
   container.append(hero);
+
+  const recoveryPanel = el('section', 'terminal-panel market-recovery-panel');
+  const recoveryHeading = el('div', 'panel-heading');
+  recoveryHeading.append(el('span', '', 'CRISIS EXIT GATES'), el('strong', '', `${config.title} 위기 탈출 조건`));
+  const recoveryName = config.riskKey === 'US_EQUITY' ? 'us' : config.riskKey === 'KOREA_EQUITY' ? 'korea' : 'crypto';
+  recoveryPanel.append(recoveryHeading, recoveryCard(recoveryModel(recoveryName, payload)));
+  container.append(recoveryPanel);
+
+  if (recoveryName === 'crypto') {
+    container.append(renderCryptoRegime(indicators));
+  }
 
   const assetGrid = el('div', 'asset-grid');
   for (const [title, code, keys] of config.sections) {
@@ -605,6 +847,46 @@ function renderMarket(config, payload, indicators) {
   container.append(factorPanel);
 }
 
+function renderCryptoRegime(indicators) {
+  const panel = el('section', 'terminal-panel crypto-regime-panel');
+  const heading = el('div', 'panel-heading');
+  heading.append(el('span', '', 'PRICE × OPEN INTEREST'), el('strong', '', 'BTC 레버리지 국면 해석'));
+  const price = indicators.btc;
+  const oi = indicators.btc_oi;
+  const priceDelta = finite(price?.change_pct);
+  const oiDelta = finite(oi?.change_pct);
+  let title = '국면 데이터 대기';
+  let body = '가격과 미결제약정의 24시간 비교값이 모두 있어야 결합 국면을 판정합니다.';
+  let state = 'unknown';
+  if (priceDelta !== null && oiDelta !== null) {
+    if (priceDelta >= 0 && oiDelta >= 0) {
+      title = '가격↑ + OI↑ · 레버리지 동반 상승';
+      body = '추세는 강하지만 포지션이 쌓여 청산 취약성도 커집니다. 펀딩·베이시스 과열 여부를 함께 보세요.';
+      state = 'amber';
+    } else if (priceDelta < 0 && oiDelta >= 0) {
+      title = '가격↓ + OI↑ · 위험 조합';
+      body = '신규 숏 또는 손실 중인 롱이 늘 수 있는 국면입니다. 추가 하락과 연쇄청산을 가장 경계합니다.';
+      state = 'red';
+    } else if (priceDelta < 0 && oiDelta < 0) {
+      title = '가격↓ + OI↓ · 디레버리징';
+      body = '포지션 청산이 진행 중입니다. OI 급감이 멈추고 현물가격이 안정되는지 확인해야 합니다.';
+      state = 'amber';
+    } else {
+      title = '가격↑ + OI↓ · 숏커버 가능성';
+      body = '레버리지 축소 속 반등일 수 있습니다. 현물 거래대금과 테이커 매수 우위의 지속을 확인하세요.';
+      state = 'green';
+    }
+  }
+  const content = el('div', `crypto-regime ${state}`);
+  content.append(
+    el('strong', '', title),
+    el('p', '', body),
+    el('small', '', `BTC ${formatChange(price || {})} / OI ${formatChange(oi || {})}`)
+  );
+  panel.append(heading, content);
+  return panel;
+}
+
 function buildMarketSummary(config, snapshot, indicators, state) {
   const available = config.sections
     .flatMap((section) => section[2])
@@ -624,7 +906,7 @@ function indicatorTable(keys, indicators) {
   const table = el('table', 'indicator-table');
   const head = document.createElement('thead');
   const headRow = document.createElement('tr');
-  for (const title of ['지표', '현재', '변화', '추세', '기준']) {
+  for (const title of ['지표', '현재값 / RAW', '직전 변화', '최근 범위', '쉬운 해석', '추세', '기준·출처']) {
     headRow.append(el('th', '', title));
   }
   head.append(headRow);
@@ -642,25 +924,37 @@ function indicatorTable(keys, indicators) {
     const nameCell = document.createElement('td');
     nameCell.append(
       el('span', 'indicator-name', indicator.symbol),
-      el('span', 'indicator-label', indicator.label)
+      el('span', 'indicator-label', indicator.label),
+      el('span', 'indicator-asset', String(indicator.asset_class || '').toUpperCase())
     );
-    row.append(
-      nameCell,
-      el('td', finite(indicator.value) === null ? 'no-data' : '', formatValue(indicator))
-    );
+    const valueCell = el('td', finite(indicator.value) === null ? 'no-data indicator-value-cell' : 'indicator-value-cell');
+    valueCell.append(el('strong', '', formatValue(indicator)), el('small', 'raw-value', rawValue(indicator)));
+    row.append(nameCell, valueCell);
     row.append(
       el('td', direction(indicator), `${indicator.change_period || ''} ${formatChange(indicator)}`)
     );
+    const rangeCell = el('td', 'indicator-range');
+    const low = finite(indicator.history_low);
+    const high = finite(indicator.history_high);
+    rangeCell.append(
+      el('span', '', low === null || high === null ? '—' : `${formatValue({ ...indicator, value: low })} – ${formatValue({ ...indicator, value: high })}`),
+      el('small', '', finite(indicator.range_position) === null ? '' : `현재 ${Number(indicator.range_position).toFixed(0)}% 위치 · n=${indicator.observations}`)
+    );
+    row.append(rangeCell);
+    const reading = indicatorReading(indicator);
+    const readingCell = el('td', 'indicator-reading');
+    readingCell.append(el('b', reading.key, reading.label), el('small', '', reading.hint));
+    row.append(readingCell);
     const sparkCell = document.createElement('td');
     sparkCell.append(sparkline(indicator.history, 'mini-spark'));
-    row.append(
-      sparkCell,
-      el(
-        'td',
-        'indicator-label',
-        indicator.observed_at ? String(indicator.observed_at).slice(0, 10) : '—'
-      )
+    row.append(sparkCell);
+    const sourceCell = el('td', 'indicator-source');
+    sourceCell.append(
+      el('span', '', indicator.observed_at ? String(indicator.observed_at).slice(0, 16) : '—'),
+      el('small', '', indicator.source_series || 'NO SOURCE'),
+      el('small', `freshness ${String(indicator.freshness || '').startsWith('STALE') ? 'stale' : ''}`, `${indicator.cadence || 'UNKNOWN'} · ${indicator.freshness || 'UNKNOWN'}`)
     );
+    row.append(sourceCell);
     body.append(row);
   }
 
@@ -733,7 +1027,7 @@ async function loadRefreshStatus() {
     button.disabled = running;
     button.textContent = running ? '최신 데이터 수집 중…' : '최신 데이터 수집';
     collectionErrors = Array.isArray(status.errors)
-      ? status.errors.slice(0, 3).map((error) => `일부 데이터 수집 실패: ${error}`)
+      ? status.errors.slice(0, 3).map(conciseCollectionError)
       : [];
 
     if (!running && workerWasRunning) {

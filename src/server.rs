@@ -1,4 +1,5 @@
 use crate::{dashboard, db::Db, refresh::RefreshControl};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
@@ -92,10 +93,30 @@ fn dashboard_response(db: &Db) -> Result<String, Box<dyn std::error::Error>> {
         .get("as_of")
         .and_then(Value::as_str)
         .map(str::to_string);
+    let snapshot_at = |days: i64| -> Result<Value, Box<dyn std::error::Error>> {
+        let Some(as_of) = as_of.as_deref() else {
+            return Ok(Value::Null);
+        };
+        let Some(target) = DateTime::parse_from_rfc3339(as_of)
+            .ok()
+            .map(|value| value.with_timezone(&Utc) - ChronoDuration::days(days))
+        else {
+            return Ok(Value::Null);
+        };
+        Ok(db
+            .latest_snapshot_before(&target.to_rfc3339())?
+            .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
+            .unwrap_or(Value::Null))
+    };
+    let snapshot_history = json!({
+        "day": snapshot_at(1)?,
+        "week": snapshot_at(7)?,
+    });
     let mut dashboard = serde_json::to_value(dashboard::build_at(db, as_of.as_deref())?)?;
     decorate_ticker_freshness(&mut dashboard);
     Ok(serde_json::to_string(&json!({
         "snapshot": snapshot,
+        "snapshot_history": snapshot_history,
         "dashboard": dashboard,
     }))?)
 }
@@ -271,6 +292,8 @@ mod tests {
             "overviewGauges",
             "marketLights",
             "overviewQuotes",
+            "overviewRecovery",
+            "overviewMarketMatrix",
             "riskHeatmap",
             "proprietarySignals",
             "sourceHealth",
