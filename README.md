@@ -1,8 +1,24 @@
 # ECONOMICS Radar
 
-> v0.4.5: dashboard runtime hardening, market-specific risk labels, and versioned Windows release archive.
+> v0.4.6: latest-market integrity, corrected KRX derivatives analytics, coherent snapshots, and explicit data-quality coverage.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.4.6
+
+v0.4.6은 오래된 KOSPI가 최신값처럼 보이던 문제를 포함해 수집·시점·파생계산 경로를 전수 정비한 데이터 무결성 릴리스입니다.
+
+- 시작 시 KRX 최신 영업일을 우선 확인한 뒤 같은 시점의 스냅샷으로 화면 구성
+- KRX 조회 종료일을 한국시간 오늘로 수정하고, 공식 API가 확인한 최신 EOD 날짜를 별도 기록
+- 코스피200 선물에서 야간·스프레드를 제외하고 정규장 단순선물만 사용
+- 선물 베이시스는 정규장 최근월물, 미결제약정은 정규장 단순선물 전체 월물 합계로 계산
+- 옵션 풋/콜과 내재변동성은 정규장 최근월물만 사용하며 IV는 거래량 가중
+- KOSPI/KOSDAQ 시장폭은 단순 평균 대신 실제 종목 수로 가중
+- Binance 현재가는 덮어쓰기형 live quote로 분리하고, 이력은 종료된 시간봉만 저장
+- 관측시각·발표시각·수집시각을 모두 만족하는 as-of 조회와 동일 발표시각 개정본 선택 수정
+- 결측률·신선도·사용 가능 비율에 따라 신뢰도를 계산하며 인위적인 최저점 제거
+- OFR FSI, NY Fed 프라이머리딜러 결제실패, Fed SCOOS, BIS 글로벌 달러신용 내장 공식 수집기 추가
+- 소스별 예상/가용/결측/지연 계열을 화면에서 구분
 
 ## v0.4.5
 
@@ -62,7 +78,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.4.5-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.4.6-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -82,7 +98,7 @@ KRX_API_KEY=
 - `FRED_API_KEY`: FRED 수집 및 명시적 ALFRED 수집
 - `ECOS_API_KEY`: 한국은행 ECOS
 - `KRX_API_KEY`: KRX Open API 인증키. 서비스별 활용승인이 별도로 필요
-- `OFFICIAL_ADAPTERS_FILE`: OFR·NY Fed·CFTC·TIC·BIS 등 설정형 공식 JSON 어댑터
+- `OFFICIAL_ADAPTERS_FILE`: 내장되지 않은 CFTC·TIC·FSC 등 공식 JSON 피드를 추가할 때만 쓰는 선택 설정
 
 실제 키는 GitHub나 Release ZIP에 포함되지 않습니다.
 

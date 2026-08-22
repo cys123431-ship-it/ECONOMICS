@@ -1,12 +1,15 @@
 use crate::{
     config::Config,
     db::{Db, NewObservation},
+    krx_analytics,
 };
-use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc, Weekday};
+use chrono::{
+    Datelike, Duration as ChronoDuration, FixedOffset, NaiveDate, SecondsFormat, Utc, Weekday,
+};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, error::Error, fs, thread, time::Duration};
+use std::{collections::BTreeMap, error::Error, fs, io::Cursor, thread, time::Duration};
 
 type AuctionValues = (f64, Option<f64>, Option<f64>, Option<f64>);
 
@@ -299,6 +302,301 @@ pub fn collect_fred(
     Ok(report)
 }
 
+/// Collects official public feeds that do not require another user-supplied key.
+/// Each feed is isolated so a temporary outage cannot suppress the others.
+pub fn collect_builtin_official(
+    config: &Config,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let http = client(config)?;
+    let mut report = CollectionReport::default();
+    for (name, result) in [
+        ("ofr fsi", collect_ofr_fsi(&http, db, start)),
+        (
+            "ny fed primary dealers",
+            collect_nyfed_dealer_fails(&http, db, start),
+        ),
+        (
+            "bis global liquidity",
+            collect_bis_global_dollar_credit(&http, db, start),
+        ),
+    ] {
+        match result {
+            Ok(collected) => report.merge(collected),
+            Err(error) => report.error(name, error),
+        }
+    }
+    if config.fred_api_key.is_some() {
+        match collect_fred_alias(
+            config,
+            db,
+            start,
+            "EXHE1C3Q4NP",
+            "scoos",
+            "MARGIN_TIGHTENING",
+        ) {
+            Ok(collected) => report.merge(collected),
+            Err(error) => report.error("fed scoos", error),
+        }
+    }
+    Ok(report)
+}
+
+fn collect_ofr_fsi(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let bytes = http
+        .get("https://www.financialresearch.gov/financial-stress-index/data/fsi.csv")
+        .send()?
+        .error_for_status()?
+        .bytes()?;
+    let mut csv = csv::Reader::from_reader(bytes.as_ref());
+    let mut report = CollectionReport::default();
+    let mut latest = None;
+    for row in csv.deserialize::<OfrFsiRow>() {
+        let row = row?;
+        if row.date.as_str() < start {
+            continue;
+        }
+        report.record(db.put(&NewObservation {
+            source: "ofr_fsi".into(),
+            series: "OFR_FSI".into(),
+            entity: String::new(),
+            observed_at: row.date.clone(),
+            value: row.value,
+            released_at: None,
+            source_asof: Some(Utc::now().to_rfc3339()),
+            revision_id: Some(format!("value:{:.17}", row.value)),
+            metadata: json!({"unit":"index","official_feed":"OFR Financial Stress Index"}),
+        }));
+        latest = Some(row.date);
+    }
+    if let Some(latest) = latest {
+        db.mark_series_checked("ofr_fsi", "OFR_FSI", &latest)?;
+    }
+    Ok(report)
+}
+
+#[derive(Debug, Deserialize)]
+struct OfrFsiRow {
+    #[serde(rename = "Date")]
+    date: String,
+    #[serde(rename = "OFR FSI")]
+    value: f64,
+}
+
+fn collect_nyfed_dealer_fails(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    const ENDPOINT: &str = "https://markets.newyorkfed.org/api/pd/get/PDFTR-USTET_PDFTR-UST_PDFTD-USTET_PDFTD-UST.json";
+    let value: Value = http.get(ENDPOINT).send()?.error_for_status()?.json()?;
+    let rows = value
+        .pointer("/pd/timeseries")
+        .and_then(Value::as_array)
+        .ok_or("NY Fed response missing pd.timeseries")?;
+    let mut daily: BTreeMap<String, (f64, usize)> = BTreeMap::new();
+    for row in rows {
+        let Some(date) = row.get("asofdate").and_then(Value::as_str) else {
+            continue;
+        };
+        if date < start {
+            continue;
+        }
+        let Some(value) = parse_number(row.get("value")) else {
+            continue;
+        };
+        let aggregate = daily.entry(date.into()).or_default();
+        aggregate.0 += value;
+        aggregate.1 += 1;
+    }
+    let mut report = CollectionReport::default();
+    let mut latest = None;
+    for (date, (value, component_count)) in daily {
+        report.record(db.put(&NewObservation {
+            source: "nyfed".into(),
+            series: "DEALER_FAILS".into(),
+            entity: String::new(),
+            observed_at: date.clone(),
+            value,
+            released_at: None,
+            source_asof: Some(Utc::now().to_rfc3339()),
+            revision_id: Some(format!("components:{component_count}:value:{value:.17}")),
+            metadata: json!({
+                "unit":"USD millions",
+                "component_count":component_count,
+                "components":["fails to receive USTET","fails to receive UST","fails to deliver USTET","fails to deliver UST"]
+            }),
+        }));
+        latest = Some(date);
+    }
+    if let Some(latest) = latest {
+        db.mark_series_checked("nyfed", "DEALER_FAILS", &latest)?;
+    }
+    Ok(report)
+}
+
+fn collect_fred_alias(
+    config: &Config,
+    db: &Db,
+    start: &str,
+    remote_series: &str,
+    source: &str,
+    target_series: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let key = config.fred_api_key.as_ref().ok_or("FRED_API_KEY missing")?;
+    let http = client(config)?;
+    let query = [
+        ("series_id", remote_series.to_string()),
+        ("api_key", key.to_string()),
+        ("file_type", "json".to_string()),
+        ("observation_start", start.to_string()),
+        ("limit", "100000".to_string()),
+    ];
+    let value = request_json(
+        &http,
+        "https://api.stlouisfed.org/fred/series/observations",
+        &query,
+        key,
+    )
+    .map_err(std::io::Error::other)?;
+    let rows = value
+        .get("observations")
+        .and_then(Value::as_array)
+        .ok_or("FRED alias response missing observations")?;
+    let mut report = CollectionReport::default();
+    let mut latest = None;
+    for row in rows {
+        let Some(date) = row.get("date").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(number) = parse_number(row.get("value")) else {
+            continue;
+        };
+        report.record(db.put(&NewObservation {
+            source: source.into(),
+            series: target_series.into(),
+            entity: String::new(),
+            observed_at: date.into(),
+            value: number,
+            released_at: None,
+            source_asof: Some(Utc::now().to_rfc3339()),
+            revision_id: Some(format!("{remote_series}:{number:.17}")),
+            metadata: json!({"fred_series":remote_series,"official_source":"Federal Reserve SCOOS"}),
+        }));
+        latest = Some(date.to_string());
+    }
+    if let Some(latest) = latest {
+        db.mark_series_checked(source, target_series, &latest)?;
+    }
+    Ok(report)
+}
+
+fn collect_bis_global_dollar_credit(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let bytes = http
+        .get("https://data.bis.org/static/bulk/WS_GLI_csv_flat.zip")
+        .send()?
+        .error_for_status()?
+        .bytes()?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+    let entry = archive.by_name("WS_GLI_csv_flat.csv")?;
+    let mut csv = csv::Reader::from_reader(entry);
+    let headers = csv.headers()?.clone();
+    let index = |name: &str| {
+        headers
+            .iter()
+            .position(|header| header == name)
+            .ok_or_else(|| format!("BIS CSV missing {name}"))
+    };
+    let freq = index("FREQ:Frequency")?;
+    let currency = index("CURR_DENOM:Currency of denomination")?;
+    let country = index("BORROWERS_CTY:Borrowers' country")?;
+    let borrower = index("BORROWERS_SECTOR:Borrowers' sector")?;
+    let lender = index("LENDERS_SECTOR:Lending sector")?;
+    let position = index("L_POS_TYPE:Position type")?;
+    let instrument = index("L_INSTR:Type of instruments")?;
+    let unit = index("UNIT_MEASURE:Unit of measure")?;
+    let period = index("TIME_PERIOD:Time period or range")?;
+    let observed = index("OBS_VALUE:Observation Value")?;
+    let mut report = CollectionReport::default();
+    let mut latest = None;
+    for row in csv.records() {
+        let row = row?;
+        if !row.get(freq).is_some_and(|value| value.starts_with("Q:"))
+            || !row
+                .get(currency)
+                .is_some_and(|value| value.starts_with("USD:"))
+            || !row
+                .get(country)
+                .is_some_and(|value| value.starts_with("3P:"))
+            || !row
+                .get(borrower)
+                .is_some_and(|value| value.starts_with("N:"))
+            || !row.get(lender).is_some_and(|value| value.starts_with("A:"))
+            || !row
+                .get(position)
+                .is_some_and(|value| value.starts_with("I:"))
+            || !row
+                .get(instrument)
+                .is_some_and(|value| value.starts_with("B:"))
+            || !row.get(unit).is_some_and(|value| value.starts_with("USD:"))
+        {
+            continue;
+        }
+        let Some(quarter) = row.get(period) else {
+            continue;
+        };
+        let Some(date) = quarter_end_date(quarter) else {
+            continue;
+        };
+        if date.as_str() < start {
+            continue;
+        }
+        let Some(value) = row
+            .get(observed)
+            .and_then(|value| value.parse::<f64>().ok())
+        else {
+            continue;
+        };
+        report.record(db.put(&NewObservation {
+            source: "bis".into(),
+            series: "GLOBAL_DOLLAR_CREDIT".into(),
+            entity: String::new(),
+            observed_at: date.clone(),
+            value,
+            released_at: None,
+            source_asof: Some(Utc::now().to_rfc3339()),
+            revision_id: Some(format!("{quarter}:{value:.17}")),
+            metadata: json!({"period":quarter,"unit":"USD millions","dataset":"BIS Global Liquidity Indicators"}),
+        }));
+        latest = Some(date);
+    }
+    if let Some(latest) = latest {
+        db.mark_series_checked("bis", "GLOBAL_DOLLAR_CREDIT", &latest)?;
+    }
+    Ok(report)
+}
+
+fn quarter_end_date(period: &str) -> Option<String> {
+    let (year, quarter) = period.split_once("-Q")?;
+    let suffix = match quarter {
+        "1" => "03-31",
+        "2" => "06-30",
+        "3" => "09-30",
+        "4" => "12-31",
+        _ => return None,
+    };
+    Some(format!("{year}-{suffix}"))
+}
+
 pub fn collect_treasury(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
     let http = client(config)?;
     let url = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service/v1/accounting/od/auctions_query?sort=-auction_date&page%5Bsize%5D=500";
@@ -408,62 +706,75 @@ pub fn collect_binance(config: &Config, db: &Db) -> Result<CollectionReport, Box
     for request in [
         BinanceRequest::array(
             "funding",
-            "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT&limit=1000",
+            "https://fapi.binance.com/fapi/v1/fundingRate?symbol=BTCUSDT",
             "BTC_FUNDING_ABS",
             "fundingRate",
             "fundingTime",
             true,
+            1_000,
         ),
         BinanceRequest::array(
             "open-interest-history",
-            "https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h",
             "BTC_OI",
             "sumOpenInterestValue",
             "timestamp",
             false,
+            500,
         ),
         BinanceRequest::array(
             "global-long-short",
-            "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h",
             "BTC_GLOBAL_LONG_SHORT",
             "longShortRatio",
             "timestamp",
             false,
+            500,
         ),
         BinanceRequest::array(
             "top-position",
-            "https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=BTCUSDT&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=BTCUSDT&period=1h",
             "BTC_TOP_POSITION_RATIO",
             "longShortRatio",
             "timestamp",
             false,
+            500,
         ),
         BinanceRequest::array(
             "top-account",
-            "https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=BTCUSDT&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/topLongShortAccountRatio?symbol=BTCUSDT&period=1h",
             "BTC_TOP_ACCOUNT_RATIO",
             "longShortRatio",
             "timestamp",
             false,
+            500,
         ),
         BinanceRequest::array(
             "taker-ratio",
-            "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=1h",
             "BTC_TAKER_RATIO",
             "buySellRatio",
             "timestamp",
             false,
+            500,
         ),
         BinanceRequest::array(
             "basis",
-            "https://fapi.binance.com/futures/data/basis?pair=BTCUSDT&contractType=PERPETUAL&period=1h&limit=500",
+            "https://fapi.binance.com/futures/data/basis?pair=BTCUSDT&contractType=PERPETUAL&period=1h",
             "BTC_BASIS_ABS",
             "basisRate",
             "timestamp",
             true,
+            500,
         ),
     ] {
-        match http.get(request.url).send().and_then(|response| response.error_for_status()) {
+        let limit = if db.latest("binance", request.series, None)?.is_some() {
+            5
+        } else {
+            request.initial_limit
+        };
+        let url = format!("{}&limit={limit}", request.url);
+        match http.get(url).send().and_then(|response| response.error_for_status()) {
             Ok(response) => match response.json::<Value>() {
                 Ok(value) => store_binance_array(db, &mut report, &request, &value),
                 Err(error) => report.error(request.name, error),
@@ -474,6 +785,13 @@ pub fn collect_binance(config: &Config, db: &Db) -> Result<CollectionReport, Box
     Ok(report)
 }
 
+pub fn collect_binance_live(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
+    let http = client(config)?;
+    let mut report = CollectionReport::default();
+    collect_binance_live_with_client(&http, db, &mut report);
+    Ok(report)
+}
+
 struct BinanceRequest {
     name: &'static str,
     url: &'static str,
@@ -481,6 +799,7 @@ struct BinanceRequest {
     value_field: &'static str,
     time_field: &'static str,
     absolute: bool,
+    initial_limit: usize,
 }
 
 impl BinanceRequest {
@@ -491,6 +810,7 @@ impl BinanceRequest {
         value_field: &'static str,
         time_field: &'static str,
         absolute: bool,
+        initial_limit: usize,
     ) -> Self {
         Self {
             name,
@@ -499,6 +819,7 @@ impl BinanceRequest {
             value_field,
             time_field,
             absolute,
+            initial_limit,
         }
     }
 }
@@ -557,9 +878,20 @@ fn store_binance_array(
 }
 
 fn collect_binance_price(http: &Client, db: &Db, report: &mut CollectionReport) {
-    let url = "https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=500";
+    let limit = if db
+        .latest("binance", "BTC_PRICE_USD", None)
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        5
+    } else {
+        500
+    };
+    let url =
+        format!("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit={limit}");
     let value = match http
-        .get(url)
+        .get(&url)
         .send()
         .and_then(|response| response.error_for_status())
         .and_then(|response| response.json::<Value>())
@@ -578,7 +910,17 @@ fn collect_binance_price(http: &Client, db: &Db, report: &mut CollectionReport) 
         let Some(fields) = row.as_array() else {
             continue;
         };
-        let Some(timestamp) = parse_millis(fields.first()) else {
+        let Some(close_millis) = fields.get(6).and_then(|value| match value {
+            Value::Number(value) => value.as_i64(),
+            Value::String(value) => value.parse().ok(),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if close_millis >= Utc::now().timestamp_millis() {
+            continue;
+        }
+        let Some(timestamp) = parse_millis(fields.get(6)) else {
             continue;
         };
         let Some(price) = fields.get(4).and_then(|value| parse_number(Some(value))) else {
@@ -593,8 +935,45 @@ fn collect_binance_price(http: &Client, db: &Db, report: &mut CollectionReport) 
             released_at: Some(timestamp.clone()),
             source_asof: Some(timestamp.clone()),
             revision_id: Some(format!("{timestamp}:{price:.17}")),
-            metadata: json!({"symbol":"BTCUSDT","endpoint":"hourly-klines"}),
+            metadata: json!({"symbol":"BTCUSDT","endpoint":"hourly-klines","closed":true}),
         }));
+    }
+}
+
+fn collect_binance_live_with_client(http: &Client, db: &Db, report: &mut CollectionReport) {
+    let value = match http
+        .get("https://fapi.binance.com/fapi/v1/ticker/price?symbol=BTCUSDT")
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.json::<Value>())
+    {
+        Ok(value) => value,
+        Err(error) => {
+            report.error("live-price", error);
+            return;
+        }
+    };
+    let Some(price) = parse_number(value.get("price")) else {
+        report.error("live-price", "price missing");
+        return;
+    };
+    let observed_at = parse_millis(value.get("time"))
+        .unwrap_or_else(|| Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+    report.attempted += 1;
+    match db.put_live_quote(&NewObservation {
+        source: "binance".into(),
+        series: "BTC_PRICE_USD".into(),
+        entity: "BTCUSDT".into(),
+        observed_at: observed_at.clone(),
+        value: price,
+        released_at: Some(observed_at.clone()),
+        source_asof: Some(observed_at),
+        revision_id: None,
+        metadata: json!({"symbol":"BTCUSDT","endpoint":"ticker-price","live":true}),
+    }) {
+        Ok(true) => report.stored += 1,
+        Ok(false) => report.unchanged += 1,
+        Err(error) => report.error("live-price", format!("database: {error}")),
     }
 }
 
@@ -621,16 +1000,30 @@ pub fn collect_ecos(
         .copied()
         .filter(|definition| series_filter.is_none_or(|filter| definition.0 == filter))
     {
-        let end = Utc::now().format("%Y%m%d").to_string();
+        let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+        let end_date = Utc::now().with_timezone(&kst).date_naive();
+        let start_date = db
+            .latest("ecos", series, None)?
+            .and_then(|point| point.observed_at.get(..10).map(str::to_string))
+            .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok())
+            .map(|date| date - ChronoDuration::days(14))
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+        let start_date = start_date.format("%Y%m%d").to_string();
+        let end = end_date.format("%Y%m%d").to_string();
         let page_size = 1_000usize;
         let mut start_row = 1usize;
         let mut total = usize::MAX;
         while start_row <= total {
             let end_row = start_row + page_size - 1;
-            let url =
-                format!(
-                "https://ecos.bok.or.kr/api/StatisticSearch/{}/json/kr/{}/{}/{}/D/20000101/{}/{}",
-                urlencoding::encode(key), start_row, end_row, stat, end, item
+            let url = format!(
+                "https://ecos.bok.or.kr/api/StatisticSearch/{}/json/kr/{}/{}/{}/D/{}/{}/{}",
+                urlencoding::encode(key),
+                start_row,
+                end_row,
+                stat,
+                start_date,
+                end,
+                item
             );
             let value = match request_json(&http, &url, &[], key) {
                 Ok(value) => value,
@@ -974,13 +1367,17 @@ fn krx_query_dates(
     initial_lookback_days: usize,
     history: KrxHistory,
 ) -> rusqlite::Result<Vec<NaiveDate>> {
-    let end = today - ChronoDuration::days(2);
+    let end = today;
     let latest = db
         .latest("krx", primary_series, None)?
         .and_then(|point| point.observed_at.get(..10).map(str::to_string))
         .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok());
-    if latest.is_none() && history == KrxHistory::Latest {
-        return Ok((0..=7)
+    if history == KrxHistory::Latest {
+        let start = latest
+            .map(|date| date - ChronoDuration::days(KRX_INCREMENTAL_OVERLAP_DAYS))
+            .unwrap_or_else(|| end - ChronoDuration::days(7));
+        let span = (end - start).num_days().max(0);
+        return Ok((0..=span)
             .map(|offset| end - ChronoDuration::days(offset))
             .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
             .collect());
@@ -1011,14 +1408,13 @@ pub fn collect_krx(
     }
     let http = client(config)?;
     let mut report = CollectionReport::default();
-    let today = Utc::now().date_naive();
+    let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+    let today = Utc::now().with_timezone(&kst).date_naive();
 
     for service in KRX_SERVICES
         .iter()
         .filter(|service| service_filter.is_none_or(|filter| service.api_id == filter))
     {
-        let initial_latest = service.history == KrxHistory::Latest
-            && db.latest("krx", service.primary_series, None)?.is_none();
         let dates = krx_query_dates(
             db,
             service.primary_series,
@@ -1077,7 +1473,7 @@ pub fn collect_krx(
             };
             let stored = store_krx_service(db, &mut report, service, *date, rows);
             recognized += stored;
-            if initial_latest && stored > 0 {
+            if service.history == KrxHistory::Latest && stored > 0 {
                 break;
             }
         }
@@ -1263,6 +1659,15 @@ fn store_krx_breadth(
         json!({"advances":advances,"declines":declines}),
     );
     stored += 1;
+    store_krx_value(
+        db,
+        report,
+        &format!("KRX_{market}_BREADTH_COUNT"),
+        date,
+        (advances + declines) as f64,
+        json!({"advances":advances,"declines":declines}),
+    );
+    stored += 1;
     stored
 }
 
@@ -1329,14 +1734,19 @@ fn store_krx_futures(
     rows: &[Value],
 ) -> usize {
     let mut stored = store_krx_totals(db, report, prefix, date, rows);
-    let open_interest = rows
-        .iter()
-        .filter_map(|row| {
-            parse_number(row.get("ACC_OPNINT_QTY"))
-                .or_else(|| parse_number(row.get("OPNINT_QTY")))
-                .or_else(|| parse_number(row.get("OPEN_INT")))
-        })
-        .sum::<f64>();
+    let stats = (prefix == "FUTURES").then(|| krx_analytics::futures_stats(rows));
+    let open_interest = stats
+        .as_ref()
+        .map(|stats| stats.regular_open_interest)
+        .unwrap_or_else(|| {
+            rows.iter()
+                .filter_map(|row| {
+                    parse_number(row.get("ACC_OPNINT_QTY"))
+                        .or_else(|| parse_number(row.get("OPNINT_QTY")))
+                        .or_else(|| parse_number(row.get("OPEN_INT")))
+                })
+                .sum()
+        });
     if open_interest > 0.0 {
         store_krx_value(
             db,
@@ -1344,36 +1754,43 @@ fn store_krx_futures(
             &format!("KRX_{prefix}_OI"),
             date,
             open_interest,
-            json!({"contracts":rows.len()}),
+            json!({
+                "contracts":stats.as_ref().map_or(rows.len(), |value| value.regular_contracts),
+                "session":if prefix == "FUTURES" { "정규" } else { "all" },
+                "scope":if prefix == "FUTURES" { "outright-all-maturities" } else { "all" }
+            }),
         );
         stored += 1;
     }
 
-    let basis_rows = rows
-        .iter()
-        .filter(|row| {
-            prefix != "FUTURES"
-                || row
-                    .get("PROD_NM")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| name.trim() == "코스피200 선물")
-        })
-        .collect::<Vec<_>>();
-    let weighted_basis = weighted_average_values(basis_rows.iter().filter_map(|row| {
-        let derivative =
-            parse_number(row.get("SETL_PRC")).or_else(|| parse_number(row.get("TDD_CLSPRC")))?;
-        let spot = parse_number(row.get("SPOT_PRC"))?;
-        let volume = parse_number(row.get("ACC_TRDVOL")).unwrap_or(0.0);
-        Some((derivative - spot, volume))
-    }));
-    if let Some(value) = weighted_basis {
+    let basis = stats
+        .as_ref()
+        .and_then(|stats| stats.front_month_basis)
+        .or_else(|| {
+            if prefix != "FUTURES" {
+                weighted_average_values(rows.iter().filter_map(|row| {
+                    let derivative = parse_number(row.get("SETL_PRC"))
+                        .or_else(|| parse_number(row.get("TDD_CLSPRC")))?;
+                    let spot = parse_number(row.get("SPOT_PRC"))?;
+                    let volume = parse_number(row.get("ACC_TRDVOL")).unwrap_or(0.0);
+                    Some((derivative - spot, volume))
+                }))
+            } else {
+                None
+            }
+        });
+    if let Some(value) = basis {
         store_krx_value(
             db,
             report,
             &format!("KRX_{prefix}_BASIS"),
             date,
             value,
-            json!({"contracts":basis_rows.len(),"method":"trade-volume-weighted"}),
+            json!({
+                "contract":stats.as_ref().and_then(|value| value.front_contract.clone()),
+                "session":if prefix == "FUTURES" { "정규" } else { "all" },
+                "method":if prefix == "FUTURES" { "front-month-settlement-minus-spot" } else { "trade-volume-weighted" }
+            }),
         );
         stored += 1;
         if prefix == "FUTURES" {
@@ -1383,7 +1800,12 @@ fn store_krx_futures(
                 "KRX_BASIS",
                 date,
                 value,
-                json!({"product":"코스피200 선물","method":"trade-volume-weighted"}),
+                json!({
+                    "product":"코스피200 선물",
+                    "contract":stats.as_ref().and_then(|value| value.front_contract.clone()),
+                    "session":"정규",
+                    "method":"front-month-settlement-minus-spot"
+                }),
             );
             stored += 1;
         }
@@ -1398,40 +1820,16 @@ fn store_krx_options(
     date: NaiveDate,
     rows: &[Value],
 ) -> usize {
-    let selected = rows
-        .iter()
-        .filter(|row| {
-            prefix != "OPTIONS"
-                || row
-                    .get("PROD_NM")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| name.trim() == "코스피200 옵션")
-        })
-        .collect::<Vec<_>>();
-    let mut put_volume = 0.0;
-    let mut call_volume = 0.0;
-    for row in &selected {
-        let label = ["RGHT_TP_NM", "PUT_CALL_TP_NM", "ISU_NM"]
-            .iter()
-            .find_map(|field| row.get(*field).and_then(Value::as_str))
-            .unwrap_or("")
-            .to_uppercase();
-        let volume = ["ACC_TRDVOL", "TRD_VOL"]
-            .iter()
-            .find_map(|field| parse_number(row.get(*field)))
-            .unwrap_or(0.0);
-        let tokens = label.split_whitespace().collect::<Vec<_>>();
-        if label.contains("풋") || label.contains("PUT") || tokens.contains(&"P") {
-            put_volume += volume;
-        } else if label.contains("콜") || label.contains("CALL") || tokens.contains(&"C") {
-            call_volume += volume;
-        }
-    }
     let mut stored = store_krx_totals(db, report, prefix, date, rows);
-    let open_interest = selected
-        .iter()
-        .filter_map(|row| parse_number(row.get("ACC_OPNINT_QTY")))
-        .sum::<f64>();
+    let stats = (prefix == "OPTIONS").then(|| krx_analytics::options_stats(rows));
+    let open_interest = stats.as_ref().map_or_else(
+        || {
+            rows.iter()
+                .filter_map(|row| parse_number(row.get("ACC_OPNINT_QTY")))
+                .sum()
+        },
+        |value| value.regular_open_interest,
+    );
     if open_interest > 0.0 {
         store_krx_value(
             db,
@@ -1439,32 +1837,47 @@ fn store_krx_options(
             &format!("KRX_{prefix}_OI"),
             date,
             open_interest,
-            json!({"contracts":selected.len()}),
+            json!({"session":"정규","expiry":stats.as_ref().and_then(|value| value.expiry.clone())}),
         );
         stored += 1;
     }
-    if let Some(value) = weighted_mean_refs(&selected, "IMP_VOLT", "ACC_TRDVOL") {
+    let implied_volatility = stats
+        .as_ref()
+        .and_then(|value| value.active_implied_volatility)
+        .or_else(|| {
+            (prefix != "OPTIONS").then(|| weighted_mean(rows, "IMP_VOLT", "ACC_TRDVOL"))?
+        });
+    if let Some(value) = implied_volatility {
         store_krx_value(
             db,
             report,
             &format!("KRX_{prefix}_AVG_IMPLIED_VOL"),
             date,
             value,
-            json!({"contracts":selected.len()}),
+            json!({
+                "session":if prefix == "OPTIONS" { "정규" } else { "all" },
+                "expiry":stats.as_ref().and_then(|value| value.expiry.clone()),
+                "active_contracts":stats.as_ref().map(|value| value.active_contracts),
+                "method":if prefix == "OPTIONS" { "front-month-positive-volume-weighted" } else { "positive-volume-weighted" }
+            }),
         );
         stored += 1;
     }
-    if call_volume <= f64::EPSILON {
+    let (ratio, put_volume, call_volume) = if let Some(stats) = &stats {
+        (stats.put_call_ratio, stats.put_volume, stats.call_volume)
+    } else {
+        (None, 0.0, 0.0)
+    };
+    let Some(ratio) = ratio else {
         return stored;
-    }
-    let ratio = put_volume / call_volume;
+    };
     store_krx_value(
         db,
         report,
         &format!("KRX_{prefix}_PUT_CALL_RATIO"),
         date,
         ratio,
-        json!({"put_volume":put_volume,"call_volume":call_volume,"contracts":selected.len()}),
+        json!({"put_volume":put_volume,"call_volume":call_volume,"session":"정규","expiry":stats.as_ref().and_then(|value| value.expiry.clone())}),
     );
     stored += 1;
     if prefix == "OPTIONS" {
@@ -1475,7 +1888,7 @@ fn store_krx_options(
                 series,
                 date,
                 ratio,
-                json!({"product":"코스피200 옵션","put_volume":put_volume,"call_volume":call_volume}),
+                json!({"product":"코스피200 옵션","put_volume":put_volume,"call_volume":call_volume,"session":"정규","expiry":stats.as_ref().and_then(|value| value.expiry.clone())}),
             );
             stored += 1;
         }
@@ -1600,15 +2013,6 @@ fn weighted_mean(rows: &[Value], value_field: &str, weight_field: &str) -> Optio
     }))
 }
 
-fn weighted_mean_refs(rows: &[&Value], value_field: &str, weight_field: &str) -> Option<f64> {
-    weighted_average_values(rows.iter().filter_map(|row| {
-        Some((
-            parse_number(row.get(value_field))?,
-            parse_number(row.get(weight_field)).unwrap_or(0.0),
-        ))
-    }))
-}
-
 fn weighted_average_values(values: impl Iterator<Item = (f64, f64)>) -> Option<f64> {
     let values = values
         .filter(|(value, _)| value.is_finite())
@@ -1646,10 +2050,30 @@ fn store_combined_krx_breadth(db: &Db, report: &mut CollectionReport) -> rusqlit
         .into_iter()
         .map(|point| (point.observed_at, point.value))
         .collect::<BTreeMap<_, _>>();
+    let kospi_counts = db
+        .recent("krx", "KRX_KOSPI_BREADTH_COUNT", 512, None)?
+        .into_iter()
+        .map(|point| (point.observed_at, point.value))
+        .collect::<BTreeMap<_, _>>();
+    let kosdaq_counts = db
+        .recent("krx", "KRX_KOSDAQ_BREADTH_COUNT", 512, None)?
+        .into_iter()
+        .map(|point| (point.observed_at, point.value))
+        .collect::<BTreeMap<_, _>>();
     for (observed_at, kospi_value) in kospi {
         let Some(kosdaq_value) = kosdaq.get(&observed_at) else {
             continue;
         };
+        let (Some(kospi_count), Some(kosdaq_count)) = (
+            kospi_counts.get(&observed_at),
+            kosdaq_counts.get(&observed_at),
+        ) else {
+            continue;
+        };
+        let total_count = kospi_count + kosdaq_count;
+        if total_count <= f64::EPSILON {
+            continue;
+        }
         let Some(date_text) = observed_at.get(..10) else {
             continue;
         };
@@ -1661,8 +2085,14 @@ fn store_combined_krx_breadth(db: &Db, report: &mut CollectionReport) -> rusqlit
             report,
             "KRX_BREADTH",
             date,
-            (kospi_value + kosdaq_value) / 2.0,
-            json!({"kospi":kospi_value,"kosdaq":kosdaq_value}),
+            (kospi_value * kospi_count + kosdaq_value * kosdaq_count) / total_count,
+            json!({
+                "kospi":kospi_value,
+                "kosdaq":kosdaq_value,
+                "kospi_issues":kospi_count,
+                "kosdaq_issues":kosdaq_count,
+                "method":"issue-count-weighted"
+            }),
         );
     }
     Ok(())
@@ -1691,6 +2121,9 @@ fn store_krx_value(
         revision_id: Some(format!("next-day-v1:{value:.17}")),
         metadata,
     }));
+    if let Err(error) = db.mark_series_checked("krx", series, &date.to_string()) {
+        report.error(series, format!("series status: {error}"));
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1934,7 +2367,7 @@ mod tests {
             json!({"FLUC_RT":"0.0"}),
         ];
         let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
-        assert_eq!(store_krx_breadth(&db, &mut report, "KOSPI", date, &rows), 1);
+        assert_eq!(store_krx_breadth(&db, &mut report, "KOSPI", date, &rows), 2);
         let point = db
             .latest("krx", "KRX_KOSPI_BREADTH", None)
             .unwrap()
@@ -1959,7 +2392,7 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let dates = krx_query_dates(&db, "KRX_FUTURES_OI", today, 60, KrxHistory::Full).unwrap();
         assert_eq!(dates.first().copied(), NaiveDate::from_ymd_opt(2026, 8, 11));
-        assert_eq!(dates.last().copied(), Some(latest));
+        assert_eq!(dates.last().copied(), Some(today));
     }
 
     #[test]
@@ -1982,8 +2415,8 @@ mod tests {
         let db = Db::open(&temporary.path().join("krx.db")).unwrap();
         let mut report = CollectionReport::default();
         let rows = vec![
-            json!({"ACC_OPNINT_QTY":"100"}),
-            json!({"ACC_OPNINT_QTY":"250"}),
+            json!({"PROD_NM":"코스피200 선물","MKT_NM":"정규","ISU_NM":"코스피200 F 202609 (주간)","ACC_OPNINT_QTY":"100"}),
+            json!({"PROD_NM":"코스피200 선물","MKT_NM":"정규","ISU_NM":"코스피200 F 202612 (주간)","ACC_OPNINT_QTY":"250"}),
         ];
         let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
         assert_eq!(
@@ -2000,13 +2433,13 @@ mod tests {
         let db = Db::open(&temporary.path().join("krx.db")).unwrap();
         let mut report = CollectionReport::default();
         let rows = vec![
-            json!({"PROD_NM":"코스피200 옵션","RGHT_TP_NM":"풋","ACC_TRDVOL":"300"}),
-            json!({"PROD_NM":"코스피200 옵션","RGHT_TP_NM":"콜","ACC_TRDVOL":"200"}),
+            json!({"PROD_NM":"코스피200 옵션","ISU_NM":"코스피200 P 202609 1000.0 (정규)","RGHT_TP_NM":"풋","ACC_TRDVOL":"300","IMP_VOLT":"40"}),
+            json!({"PROD_NM":"코스피200 옵션","ISU_NM":"코스피200 C 202609 1100.0 (정규)","RGHT_TP_NM":"콜","ACC_TRDVOL":"200","IMP_VOLT":"20"}),
         ];
         let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
         assert_eq!(
             store_krx_options(&db, &mut report, "OPTIONS", date, &rows),
-            4
+            5
         );
         let point = db.latest("krx", "KRX_PUT_CALL", None).unwrap().unwrap();
         assert_eq!(point.value, 1.5);
@@ -2049,14 +2482,14 @@ mod tests {
         let db = Db::open(&temporary.path().join("krx.db")).unwrap();
         let mut report = CollectionReport::default();
         let rows = vec![
-            json!({"PROD_NM":"코스피200 선물","SETL_PRC":"552.0","SPOT_PRC":"550.0","ACC_TRDVOL":"300"}),
-            json!({"PROD_NM":"코스피200 선물","SETL_PRC":"548.0","SPOT_PRC":"550.0","ACC_TRDVOL":"100"}),
+            json!({"PROD_NM":"코스피200 선물","MKT_NM":"정규","ISU_NM":"코스피200 F 202609 (주간)","SETL_PRC":"552.0","SPOT_PRC":"550.0","ACC_TRDVOL":"300"}),
+            json!({"PROD_NM":"코스피200 선물","MKT_NM":"정규","ISU_NM":"코스피200 F 202612 (주간)","SETL_PRC":"548.0","SPOT_PRC":"550.0","ACC_TRDVOL":"100"}),
             json!({"PROD_NM":"미국달러 선물","SETL_PRC":"1300.0","SPOT_PRC":"1290.0","ACC_TRDVOL":"1000"}),
         ];
         let date = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
         assert!(store_krx_futures(&db, &mut report, "FUTURES", date, &rows) >= 2);
         let point = db.latest("krx", "KRX_BASIS", None).unwrap().unwrap();
-        assert_eq!(point.value, 1.0);
+        assert_eq!(point.value, 2.0);
     }
 
     #[test]
@@ -2072,7 +2505,38 @@ mod tests {
             KrxHistory::Latest,
         )
         .unwrap();
-        assert_eq!(dates.first().copied(), NaiveDate::from_ymd_opt(2026, 8, 18));
+        assert_eq!(dates.first().copied(), Some(today));
         assert!(dates.windows(2).all(|pair| pair[0] > pair[1]));
+    }
+
+    #[test]
+    fn bis_quarters_are_normalized_to_quarter_end() {
+        assert_eq!(quarter_end_date("2026-Q1").as_deref(), Some("2026-03-31"));
+        assert_eq!(quarter_end_date("2026-Q4").as_deref(), Some("2026-12-31"));
+        assert_eq!(quarter_end_date("2026-Q5"), None);
+    }
+
+    #[test]
+    fn combined_krx_breadth_is_weighted_by_issue_count() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("breadth.db")).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 8, 21).unwrap();
+        let mut report = CollectionReport::default();
+        for (series, value) in [
+            ("KRX_KOSPI_BREADTH", 10.0),
+            ("KRX_KOSDAQ_BREADTH", 30.0),
+            ("KRX_KOSPI_BREADTH_COUNT", 100.0),
+            ("KRX_KOSDAQ_BREADTH_COUNT", 400.0),
+        ] {
+            store_krx_value(&db, &mut report, series, date, value, Value::Null);
+        }
+        store_combined_krx_breadth(&db, &mut report).unwrap();
+        assert_eq!(
+            db.latest("krx", "KRX_BREADTH", None)
+                .unwrap()
+                .unwrap()
+                .value,
+            26.0
+        );
     }
 }

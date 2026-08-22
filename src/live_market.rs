@@ -2,6 +2,7 @@ use crate::{
     collectors::CollectionReport,
     config::Config,
     db::{Db, NewObservation},
+    krx_analytics,
 };
 use chrono::{Datelike, FixedOffset, NaiveDate, SecondsFormat, Utc, Weekday};
 use reqwest::blocking::Client;
@@ -20,7 +21,6 @@ enum FastKrxKind {
 struct FastKrxService {
     api_id: &'static str,
     path: &'static str,
-    primary_series: &'static str,
     kind: FastKrxKind,
     always_poll: bool,
 }
@@ -29,42 +29,36 @@ const FAST_KRX_SERVICES: &[FastKrxService] = &[
     FastKrxService {
         api_id: "kospi_dd_trd",
         path: "idx/kospi_dd_trd",
-        primary_series: "KRX_KOSPI_CLOSE",
         kind: FastKrxKind::Index("KOSPI"),
         always_poll: true,
     },
     FastKrxService {
         api_id: "kosdaq_dd_trd",
         path: "idx/kosdaq_dd_trd",
-        primary_series: "KRX_KOSDAQ_CLOSE",
         kind: FastKrxKind::Index("KOSDAQ"),
         always_poll: true,
     },
     FastKrxService {
         api_id: "stk_bydd_trd",
         path: "sto/stk_bydd_trd",
-        primary_series: "KRX_KOSPI_BREADTH",
         kind: FastKrxKind::Breadth("KOSPI"),
         always_poll: false,
     },
     FastKrxService {
         api_id: "ksq_bydd_trd",
         path: "sto/ksq_bydd_trd",
-        primary_series: "KRX_KOSDAQ_BREADTH",
         kind: FastKrxKind::Breadth("KOSDAQ"),
         always_poll: false,
     },
     FastKrxService {
         api_id: "fut_bydd_trd",
         path: "drv/fut_bydd_trd",
-        primary_series: "KRX_BASIS",
         kind: FastKrxKind::Futures,
         always_poll: false,
     },
     FastKrxService {
         api_id: "opt_bydd_trd",
         path: "drv/opt_bydd_trd",
-        primary_series: "KRX_PUT_CALL",
         kind: FastKrxKind::Options,
         always_poll: false,
     },
@@ -103,9 +97,10 @@ fn parse_number(value: Option<&Value>) -> Option<f64> {
 }
 
 fn rows(value: &Value) -> Option<&Vec<Value>> {
-    value.get("OutBlock_1").and_then(Value::as_array).or_else(|| {
-        value.as_object()?.values().find_map(Value::as_array)
-    })
+    value
+        .get("OutBlock_1")
+        .and_then(Value::as_array)
+        .or_else(|| value.as_object()?.values().find_map(Value::as_array))
 }
 
 fn store(
@@ -133,6 +128,11 @@ fn store(
         Ok(false) => report.unchanged += 1,
         Err(error) => report.errors.push(format!("{series}: database: {error}")),
     }
+    if let Err(error) = db.mark_series_checked("krx", series, &date.to_string()) {
+        report
+            .errors
+            .push(format!("{series}: series status: {error}"));
+    }
 }
 
 fn fetch_rows(
@@ -142,7 +142,10 @@ fn fetch_rows(
     date: NaiveDate,
 ) -> Result<Option<Value>, String> {
     let response = http
-        .get(format!("https://data-dbg.krx.co.kr/svc/apis/{}", service.path))
+        .get(format!(
+            "https://data-dbg.krx.co.kr/svc/apis/{}",
+            service.path
+        ))
         .header("AUTH_KEY", key)
         .query(&[("basDd", date.format("%Y%m%d").to_string())])
         .send()
@@ -175,7 +178,11 @@ fn store_index(
     date: NaiveDate,
     rows: &[Value],
 ) {
-    let target = if market == "KOSPI" { "코스피" } else { "코스닥" };
+    let target = if market == "KOSPI" {
+        "코스피"
+    } else {
+        "코스닥"
+    };
     let Some(row) = rows.iter().find(|row| {
         row.get("IDX_NM")
             .and_then(Value::as_str)
@@ -232,124 +239,84 @@ fn store_breadth(
         value,
         json!({"fast_refresh":true,"advances":advances,"declines":declines}),
     );
-}
-
-fn weighted_average(values: impl Iterator<Item = (f64, f64)>) -> Option<f64> {
-    let mut weighted = 0.0;
-    let mut weights = 0.0;
-    let mut fallback = Vec::new();
-    for (value, weight) in values {
-        fallback.push(value);
-        if weight > 0.0 {
-            weighted += value * weight;
-            weights += weight;
-        }
-    }
-    if weights > 0.0 {
-        Some(weighted / weights)
-    } else if fallback.is_empty() {
-        None
-    } else {
-        Some(fallback.iter().sum::<f64>() / fallback.len() as f64)
-    }
+    store(
+        db,
+        report,
+        &format!("KRX_{market}_BREADTH_COUNT"),
+        date,
+        (advances + declines) as f64,
+        json!({"fast_refresh":true,"advances":advances,"declines":declines}),
+    );
 }
 
 fn store_futures(db: &Db, report: &mut CollectionReport, date: NaiveDate, rows: &[Value]) {
-    let selected = rows
-        .iter()
-        .filter(|row| {
-            row.get("PROD_NM")
-                .and_then(Value::as_str)
-                .is_some_and(|name| name.trim() == "코스피200 선물")
-        })
-        .collect::<Vec<_>>();
-    let open_interest = selected
-        .iter()
-        .filter_map(|row| {
-            parse_number(row.get("ACC_OPNINT_QTY"))
-                .or_else(|| parse_number(row.get("OPNINT_QTY")))
-                .or_else(|| parse_number(row.get("OPEN_INT")))
-        })
-        .sum::<f64>();
-    if open_interest > 0.0 {
+    let stats = krx_analytics::futures_stats(rows);
+    if stats.regular_open_interest > 0.0 {
         store(
             db,
             report,
             "KRX_FUTURES_OI",
             date,
-            open_interest,
-            json!({"fast_refresh":true,"product":"코스피200 선물"}),
+            stats.regular_open_interest,
+            json!({
+                "fast_refresh":true,
+                "product":"코스피200 선물",
+                "session":"정규",
+                "scope":"outright-all-maturities",
+                "contracts":stats.regular_contracts
+            }),
         );
     }
-    if let Some(value) = weighted_average(selected.iter().filter_map(|row| {
-        let derivative = parse_number(row.get("SETL_PRC"))
-            .or_else(|| parse_number(row.get("TDD_CLSPRC")))?;
-        let spot = parse_number(row.get("SPOT_PRC"))?;
-        let volume = parse_number(row.get("ACC_TRDVOL")).unwrap_or(0.0);
-        Some((derivative - spot, volume))
-    })) {
+    if let Some(value) = stats.front_month_basis {
         store(
             db,
             report,
             "KRX_BASIS",
             date,
             value,
-            json!({"fast_refresh":true,"product":"코스피200 선물"}),
+            json!({
+                "fast_refresh":true,
+                "product":"코스피200 선물",
+                "session":"정규",
+                "contract":stats.front_contract,
+                "method":"front-month-settlement-minus-spot"
+            }),
         );
     }
 }
 
 fn store_options(db: &Db, report: &mut CollectionReport, date: NaiveDate, rows: &[Value]) {
-    let selected = rows
-        .iter()
-        .filter(|row| {
-            row.get("PROD_NM")
-                .and_then(Value::as_str)
-                .is_some_and(|name| name.trim() == "코스피200 옵션")
-        })
-        .collect::<Vec<_>>();
-    let mut put_volume = 0.0;
-    let mut call_volume = 0.0;
-    let mut iv_weighted = 0.0;
-    let mut iv_weight = 0.0;
-    for row in &selected {
-        let label = ["RGHT_TP_NM", "PUT_CALL_TP_NM", "ISU_NM"]
-            .iter()
-            .find_map(|field| row.get(*field).and_then(Value::as_str))
-            .unwrap_or("")
-            .to_uppercase();
-        let volume = parse_number(row.get("ACC_TRDVOL"))
-            .or_else(|| parse_number(row.get("TRD_VOL")))
-            .unwrap_or(0.0);
-        if label.contains("풋") || label.contains("PUT") || label.split_whitespace().any(|v| v == "P") {
-            put_volume += volume;
-        } else if label.contains("콜") || label.contains("CALL") || label.split_whitespace().any(|v| v == "C") {
-            call_volume += volume;
-        }
-        if let Some(iv) = parse_number(row.get("IMP_VOLT")) {
-            let weight = volume.max(1.0);
-            iv_weighted += iv * weight;
-            iv_weight += weight;
-        }
-    }
-    if call_volume > f64::EPSILON {
+    let stats = krx_analytics::options_stats(rows);
+    if let Some(value) = stats.put_call_ratio {
         store(
             db,
             report,
             "KRX_PUT_CALL",
             date,
-            put_volume / call_volume,
-            json!({"fast_refresh":true,"put_volume":put_volume,"call_volume":call_volume}),
+            value,
+            json!({
+                "fast_refresh":true,
+                "put_volume":stats.put_volume,
+                "call_volume":stats.call_volume,
+                "session":"정규",
+                "expiry":stats.expiry
+            }),
         );
     }
-    if iv_weight > 0.0 {
+    if let Some(value) = stats.active_implied_volatility {
         store(
             db,
             report,
             "KRX_OPTIONS_AVG_IMPLIED_VOL",
             date,
-            iv_weighted / iv_weight,
-            json!({"fast_refresh":true,"contracts":selected.len()}),
+            value,
+            json!({
+                "fast_refresh":true,
+                "active_contracts":stats.active_contracts,
+                "session":"정규",
+                "expiry":stats.expiry,
+                "method":"front-month-positive-volume-weighted"
+            }),
         );
     }
 }
@@ -364,7 +331,22 @@ fn store_combined_breadth(db: &Db, report: &mut CollectionReport) {
     if kospi.observed_at != kosdaq.observed_at {
         return;
     }
-    let Ok(date) = NaiveDate::parse_from_str(&kospi.observed_at[..10.min(kospi.observed_at.len())], "%Y-%m-%d") else {
+    let Ok(Some(kospi_count)) = db.latest("krx", "KRX_KOSPI_BREADTH_COUNT", None) else {
+        return;
+    };
+    let Ok(Some(kosdaq_count)) = db.latest("krx", "KRX_KOSDAQ_BREADTH_COUNT", None) else {
+        return;
+    };
+    if kospi_count.observed_at != kospi.observed_at
+        || kosdaq_count.observed_at != kospi.observed_at
+        || kospi_count.value + kosdaq_count.value <= f64::EPSILON
+    {
+        return;
+    }
+    let Ok(date) = NaiveDate::parse_from_str(
+        &kospi.observed_at[..10.min(kospi.observed_at.len())],
+        "%Y-%m-%d",
+    ) else {
         return;
     };
     store(
@@ -372,8 +354,15 @@ fn store_combined_breadth(db: &Db, report: &mut CollectionReport) {
         report,
         "KRX_BREADTH",
         date,
-        (kospi.value + kosdaq.value) / 2.0,
-        json!({"fast_refresh":true,"components":["KOSPI","KOSDAQ"]}),
+        (kospi.value * kospi_count.value + kosdaq.value * kosdaq_count.value)
+            / (kospi_count.value + kosdaq_count.value),
+        json!({
+            "fast_refresh":true,
+            "components":["KOSPI","KOSDAQ"],
+            "kospi_issues":kospi_count.value,
+            "kosdaq_issues":kosdaq_count.value,
+            "method":"issue-count-weighted"
+        }),
     );
 }
 
@@ -387,9 +376,6 @@ pub fn collect_krx_fast(config: &Config, db: &Db) -> Result<CollectionReport, Bo
     let mut report = CollectionReport::default();
 
     for service in FAST_KRX_SERVICES {
-        if !service.always_poll && db.latest("krx", service.primary_series, None)?.is_none() {
-            continue;
-        }
         let mut found = false;
         for date in &dates {
             match fetch_rows(&http, key, *service, *date) {
@@ -416,7 +402,10 @@ pub fn collect_krx_fast(config: &Config, db: &Db) -> Result<CollectionReport, Bo
                 }
             }
         }
-        if !found && service.always_poll && report.errors.iter().all(|e| !e.starts_with(service.api_id)) {
+        if !found
+            && service.always_poll
+            && report.errors.iter().all(|e| !e.starts_with(service.api_id))
+        {
             report.errors.push(format!(
                 "{}: no published rows in the latest five business dates",
                 service.api_id

@@ -22,7 +22,7 @@ struct IndicatorDefinition {
     change_period: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct DashboardIndicator {
     pub key: &'static str,
     pub label: &'static str,
@@ -42,7 +42,7 @@ pub struct DashboardIndicator {
     pub change_period: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct DashboardData {
     pub indicators: Vec<DashboardIndicator>,
 }
@@ -290,7 +290,7 @@ const INDICATORS: &[IndicatorDefinition] = &[
     ),
     indicator(
         "krx_basis",
-        "코스피200 선물 베이시스",
+        "코스피200 정규장 최근월 선물 베이시스",
         "K200 BASIS",
         "korea",
         "futures",
@@ -302,7 +302,7 @@ const INDICATORS: &[IndicatorDefinition] = &[
     ),
     indicator(
         "krx_futures_oi",
-        "코스피200 선물 미결제약정",
+        "코스피200 정규장 단순선물 전체 월물 미결제약정 합계",
         "K200 OI",
         "korea",
         "futures",
@@ -314,7 +314,7 @@ const INDICATORS: &[IndicatorDefinition] = &[
     ),
     indicator(
         "krx_put_call",
-        "코스피200 옵션 풋/콜",
+        "코스피200 정규장 최근월 옵션 거래량 풋/콜",
         "PUT/CALL",
         "korea",
         "options",
@@ -326,7 +326,7 @@ const INDICATORS: &[IndicatorDefinition] = &[
     ),
     indicator(
         "krx_option_iv",
-        "코스피200 옵션 내재변동성",
+        "코스피200 정규장 최근월 거래량가중 IV",
         "K200 IV",
         "korea",
         "options",
@@ -485,35 +485,41 @@ const fn indicator(
     }
 }
 
-pub fn build(db: &Db) -> rusqlite::Result<DashboardData> {
+pub fn build_at(db: &Db, as_of: Option<&str>) -> rusqlite::Result<DashboardData> {
     let mut indicators = Vec::with_capacity(INDICATORS.len());
     for definition in INDICATORS {
-        indicators.push(read_indicator(db, definition)?);
+        indicators.push(read_indicator(db, definition, as_of)?);
     }
     Ok(DashboardData { indicators })
 }
 
 fn point_is_newer(candidate: &Point, selected: &Point) -> bool {
-    (candidate.observed_at.as_str(), candidate.ingested_at.as_str())
-        > (selected.observed_at.as_str(), selected.ingested_at.as_str())
+    (
+        candidate.observed_at.as_str(),
+        candidate.ingested_at.as_str(),
+    ) > (selected.observed_at.as_str(), selected.ingested_at.as_str())
 }
 
-fn freshness(source: Option<&str>, point: Option<&Point>) -> String {
+fn freshness(
+    db: &Db,
+    selected: Option<SeriesRef>,
+    point: Option<&Point>,
+) -> rusqlite::Result<String> {
     let Some(point) = point else {
-        return "NO DATA".into();
+        return Ok("NO DATA".into());
     };
-    if source.is_some_and(|source| source.eq_ignore_ascii_case("binance")) {
+    if selected.is_some_and(|value| value.source.eq_ignore_ascii_case("binance")) {
         if let Ok(ingested) = DateTime::parse_from_rfc3339(&point.ingested_at) {
             let age = Utc::now()
                 .signed_duration_since(ingested.with_timezone(&Utc))
                 .num_seconds();
-            return if age <= 120 {
+            return Ok(if age <= 120 {
                 "LIVE".into()
             } else if age <= 600 {
                 "DELAYED".into()
             } else {
                 format!("STALE {}m", age.max(0) / 60)
-            };
+            });
         }
     }
     let date = point
@@ -521,21 +527,45 @@ fn freshness(source: Option<&str>, point: Option<&Point>) -> String {
         .get(..10)
         .and_then(|value| NaiveDate::parse_from_str(value, "%Y-%m-%d").ok());
     let Some(date) = date else {
-        return "UNKNOWN".into();
+        return Ok("UNKNOWN".into());
     };
     let age = (Utc::now().date_naive() - date).num_days();
+    if let Some(selected) = selected.filter(|value| value.source.eq_ignore_ascii_case("krx")) {
+        if let Some(status) = db.series_status(selected.source, selected.series)? {
+            let checked_recently = DateTime::parse_from_rfc3339(&status.checked_at)
+                .ok()
+                .is_some_and(|checked| {
+                    Utc::now()
+                        .signed_duration_since(checked.with_timezone(&Utc))
+                        .num_hours()
+                        <= 24
+                });
+            if checked_recently && status.latest_observed_at == point.observed_at {
+                return Ok("LATEST VERIFIED".into());
+            }
+        }
+    }
     if age <= 0 {
-        "TODAY".into()
-    } else if age <= 3 {
-        "LATEST EOD".into()
+        Ok("TODAY".into())
+    } else if age
+        <= selected.map_or(7, |value| match value.source {
+            "ecos" => 60,
+            "treasury" => 30,
+            "fred" => 10,
+            "krx" => 7,
+            _ => 7,
+        })
+    {
+        Ok("PUBLISHED EOD".into())
     } else {
-        format!("STALE {age}d")
+        Ok(format!("STALE {age}d"))
     }
 }
 
 fn read_indicator(
     db: &Db,
     definition: &IndicatorDefinition,
+    as_of: Option<&str>,
 ) -> rusqlite::Result<DashboardIndicator> {
     let mut selected: Option<(SeriesRef, Vec<Point>)> = None;
     for candidate in definition.candidates {
@@ -543,7 +573,7 @@ fn read_indicator(
             candidate.source,
             candidate.series,
             definition.comparison_points.max(30),
-            None,
+            as_of,
         )?;
         let Some(latest) = points.last() else {
             continue;
@@ -556,9 +586,23 @@ fn read_indicator(
             selected = Some((*candidate, points));
         }
     }
-    let (selected_ref, points) = selected
+    let (mut selected_ref, points) = selected
         .map(|(candidate, points)| (Some(candidate), points))
         .unwrap_or_default();
+    let mut points = points;
+    if definition.key == "btc" {
+        if let Some(live) = db.latest_live_quote("binance", "BTC_PRICE_USD", "BTCUSDT")? {
+            selected_ref = Some(series("binance", "BTC_PRICE_USD"));
+            if points
+                .last()
+                .is_none_or(|point| point.observed_at < live.observed_at)
+            {
+                points.push(live);
+            } else if let Some(last) = points.last_mut() {
+                *last = live;
+            }
+        }
+    }
     let source = selected_ref.map(|candidate| candidate.source.to_uppercase());
     let latest = points.last();
     let comparison = (points.len() >= definition.comparison_points)
@@ -583,7 +627,7 @@ fn read_indicator(
         observed_at: latest.map(|point| point.observed_at.clone()),
         ingested_at: latest.map(|point| point.ingested_at.clone()),
         source,
-        freshness: freshness(selected_ref.map(|candidate| candidate.source), latest),
+        freshness: freshness(db, selected_ref, latest)?,
         unit: definition.unit,
         decimals: definition.decimals,
         change_period: definition.change_period,
@@ -613,7 +657,7 @@ mod tests {
             6_464.0,
         ))
         .unwrap();
-        let dashboard = build(&db).unwrap();
+        let dashboard = build_at(&db, None).unwrap();
         let sp500 = dashboard
             .indicators
             .iter()
@@ -649,7 +693,7 @@ mod tests {
             1_395.0,
         ))
         .unwrap();
-        let dashboard = build(&db).unwrap();
+        let dashboard = build_at(&db, None).unwrap();
         let usdkrw = dashboard
             .indicators
             .iter()

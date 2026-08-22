@@ -1,5 +1,4 @@
 use crate::{dashboard, db::Db, refresh::RefreshControl};
-use chrono::{Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
@@ -64,7 +63,7 @@ fn decorate_ticker_freshness(dashboard: &mut Value) {
             .and_then(Value::as_str)
             .unwrap_or(key)
             .to_string();
-        let mut freshness = indicator
+        let freshness = indicator
             .get("freshness")
             .and_then(Value::as_str)
             .unwrap_or("UNKNOWN")
@@ -75,30 +74,6 @@ fn decorate_ticker_freshness(dashboard: &mut Value) {
             .and_then(|value| value.get(..10))
             .unwrap_or("NO DATE")
             .to_string();
-        let source = indicator
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if source == "KRX" {
-            let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
-            let now = Utc::now().with_timezone(&kst);
-            let today = now.date_naive();
-            let observed = NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok();
-            if observed == Some(today) {
-                freshness = "KRX EOD TODAY".into();
-            } else if observed.is_some_and(|value| value < today)
-                && !matches!(now.weekday(), Weekday::Sat | Weekday::Sun)
-            {
-                let minute = now.hour() * 60 + now.minute();
-                freshness = if minute < 16 * 60 {
-                    "KRX EOD(오늘 16:00 이후)".into()
-                } else if minute < 18 * 60 + 15 {
-                    "KRX EOD(당일 공개 확인 중)".into()
-                } else {
-                    "KRX EOD(최신 공개 종가)".into()
-                };
-            }
-        }
         if let Some(object) = indicator.as_object_mut() {
             object.insert(
                 "label".into(),
@@ -113,7 +88,11 @@ fn dashboard_response(db: &Db) -> Result<String, Box<dyn std::error::Error>> {
         .latest_snapshot_json()?
         .and_then(|payload| serde_json::from_str::<Value>(&payload).ok())
         .unwrap_or_else(|| json!({"status":"no_snapshot"}));
-    let mut dashboard = serde_json::to_value(dashboard::build(db)?)?;
+    let as_of = snapshot
+        .get("as_of")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let mut dashboard = serde_json::to_value(dashboard::build_at(db, as_of.as_deref())?)?;
     decorate_ticker_freshness(&mut dashboard);
     Ok(serde_json::to_string(&json!({
         "snapshot": snapshot,

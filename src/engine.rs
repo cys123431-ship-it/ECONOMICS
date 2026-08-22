@@ -796,6 +796,14 @@ pub struct SourceDiagnostic {
     pub age_days: Option<i64>,
     pub fresh: bool,
     pub revisions: usize,
+    #[serde(default)]
+    pub expected_series: usize,
+    #[serde(default)]
+    pub available_series: usize,
+    #[serde(default)]
+    pub missing_series: Vec<String>,
+    #[serde(default)]
+    pub stale_series: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -818,6 +826,16 @@ pub struct Snapshot {
     pub rules_evaluated: usize,
     pub rules_triggered: usize,
     pub rules_indeterminate: usize,
+    #[serde(default)]
+    pub metrics_expected: usize,
+    #[serde(default)]
+    pub metrics_available: usize,
+    #[serde(default)]
+    pub metrics_usable: usize,
+    #[serde(default)]
+    pub missing_metrics: Vec<String>,
+    #[serde(default)]
+    pub stale_metrics: Vec<String>,
 }
 
 #[derive(Default)]
@@ -842,8 +860,13 @@ pub fn run_at(
     let mut context = Context::default();
     let mut accumulators: HashMap<&'static str, NodeAccumulator> = HashMap::new();
     let total_weight = METRICS.iter().map(|metric| metric.weight).sum::<f64>();
-    let mut available_weight = 0.0;
+    let mut observed_weight = 0.0;
+    let mut usable_weight = 0.0;
     let mut fresh_weight = 0.0;
+    let mut missing_metrics = Vec::new();
+    let mut stale_metrics = Vec::new();
+    let mut metrics_available = 0usize;
+    let mut metrics_usable = 0usize;
 
     for definition in METRICS {
         let prefer_alfred =
@@ -859,17 +882,23 @@ pub fn run_at(
             latest = db.latest(query_source, definition.series, Some(as_of))?;
         }
         let Some(latest) = latest else {
+            missing_metrics.push(format!("{}:{}", definition.source, definition.series));
             continue;
         };
         let points = db.recent(query_source, definition.series, 512, Some(as_of))?;
         if points.is_empty() {
+            missing_metrics.push(format!("{}:{}", definition.source, definition.series));
             continue;
         }
+        observed_weight += definition.weight;
+        metrics_available += 1;
         let age = age_days(&latest.observed_at, as_of_time);
         let is_fresh = age.is_some_and(|age| age <= definition.max_age_days);
         if !is_fresh {
+            stale_metrics.push(format!("{}:{}", definition.source, definition.series));
             continue;
         }
+        fresh_weight += definition.weight;
         let transformed = transform_points(&points, definition.transform);
         if transformed.len() < config.min_samples + 1 {
             continue;
@@ -886,8 +915,8 @@ pub fn run_at(
         };
         let risk_history =
             rolling_risk_history(&transformed, definition.high_is_safe, config.min_samples);
-        available_weight += definition.weight;
-        fresh_weight += definition.weight;
+        usable_weight += definition.weight;
+        metrics_usable += 1;
         context.insert_signal(
             definition.series,
             Signal {
@@ -977,16 +1006,15 @@ pub fn run_at(
     let resilience = scoring::mean(&resilience_nodes).map(scoring::clamp);
 
     let expected_nodes = DIMENSIONS.len() + MODULES.len();
-    let metric_coverage = available_weight / total_weight;
+    let metric_coverage = usable_weight / total_weight;
+    let observed_coverage = observed_weight / total_weight;
     let node_coverage = nodes.len() as f64 / expected_nodes as f64;
-    let freshness = if available_weight > 0.0 {
-        fresh_weight / available_weight
-    } else {
-        0.0
-    };
+    let freshness = fresh_weight / total_weight;
     let confidence =
         scoring::clamp(100.0 * (0.55 * metric_coverage + 0.30 * node_coverage + 0.15 * freshness));
-    let data_quality = scoring::clamp(100.0 * (0.65 * freshness + 0.35 * metric_coverage));
+    let data_quality = scoring::clamp(
+        100.0 * (0.45 * freshness + 0.35 * metric_coverage + 0.20 * observed_coverage),
+    );
     let base_risk = match (stress, vulnerability) {
         (Some(stress), Some(vulnerability)) => Some(0.55 * stress + 0.45 * vulnerability),
         (Some(stress), None) => Some(stress),
@@ -1103,6 +1131,11 @@ pub fn run_at(
         rules_evaluated: evaluation.rules_evaluated,
         rules_triggered: evaluation.rules_triggered,
         rules_indeterminate: evaluation.rules_indeterminate,
+        metrics_expected: METRICS.len(),
+        metrics_available,
+        metrics_usable,
+        missing_metrics,
+        stale_metrics,
     };
     if save {
         db.save_snapshot(&snapshot)?;
@@ -1253,49 +1286,151 @@ fn build_source_diagnostics(
     as_of_time: DateTime<Utc>,
     context: &mut Context,
 ) -> Result<HashMap<String, SourceDiagnostic>, Box<dyn std::error::Error>> {
-    let specs = [
-        ("fred", "FRED_DAILY", 4),
-        ("alfred", "FRED_MONTHLY", 45),
-        ("ofr_repo", "OFR_REPO", 3),
-        ("ofr_fsi", "OFR_FSI", 4),
-        ("nyfed", "NYFED_MARKETS", 3),
-        ("scoos", "FED_SCOOS", 120),
-        ("ofr_hfm", "OFR_HFM", 120),
-        ("ofr_mmf", "OFR_MMF", 45),
-        ("cftc", "CFTC_COT", 10),
-        ("treasury", "TREASURY_AUCTION", 21),
-        ("treasury_tic", "TREASURY_TIC", 50),
-        ("bis", "BIS_GLI", 130),
-        ("ecos", "BOK_ECOS", 60),
-        ("krx", "KRX", 3),
-        ("binance", "BINANCE", 2),
+    let specs: &[(&str, &str, i64, &[&str])] = &[
+        (
+            "fred",
+            "FRED_DAILY",
+            4,
+            &[
+                "SP500",
+                "NASDAQCOM",
+                "DJIA",
+                "VIXCLS",
+                "DGS10",
+                "DGS2",
+                "T10Y2Y",
+                "BAMLH0A0HYM2",
+            ],
+        ),
+        (
+            "fred",
+            "FRED_WEEKLY",
+            10,
+            &["WEI", "ICSA", "NFCI", "DTWEXBGS"],
+        ),
+        ("fred", "FRED_MONTHLY", 75, &["CFNAI", "SAHMREALTIME"]),
+        ("ofr_repo", "OFR_REPO", 3, &["SOFR_P99_SPREAD"]),
+        ("ofr_fsi", "OFR_FSI", 4, &["OFR_FSI"]),
+        ("nyfed", "NYFED_MARKETS", 7, &["DEALER_FAILS"]),
+        ("nyfed", "NYFED_PD", 7, &["DEALER_FAILS"]),
+        ("scoos", "FED_SCOOS", 120, &["MARGIN_TIGHTENING"]),
+        (
+            "ofr_hfm",
+            "OFR_HFM",
+            120,
+            &[
+                "HF_LEVERAGE",
+                "HF_OVERNIGHT_FUNDING",
+                "HF_COUNTERPARTY_CONCENTRATION",
+            ],
+        ),
+        ("ofr_mmf", "OFR_MMF", 45, &["MMF_REPO_CONCENTRATION"]),
+        ("cftc", "CFTC_COT", 10, &["UST_NET_POSITION"]),
+        (
+            "treasury",
+            "TREASURY_AUCTION",
+            21,
+            &["AUCTION_BTC", "BUYBACK_OFFER_ACCEPT_RATIO"],
+        ),
+        (
+            "treasury_tic",
+            "TREASURY_TIC",
+            50,
+            &["FOREIGN_TREASURY_FLOW"],
+        ),
+        ("bis", "BIS_GLI", 130, &["GLOBAL_DOLLAR_CREDIT"]),
+        ("ecos", "BOK_ECOS", 60, &["KR_USD_KRW", "KR_BASE_RATE"]),
+        (
+            "krx",
+            "KRX",
+            3,
+            &[
+                "KRX_KOSPI_CLOSE",
+                "KRX_KOSDAQ_CLOSE",
+                "KRX_BASIS",
+                "KRX_PUT_CALL",
+                "KRX_BREADTH",
+            ],
+        ),
+        (
+            "binance",
+            "BINANCE",
+            2,
+            &[
+                "BTC_FUNDING_ABS",
+                "BTC_OI",
+                "BTC_GLOBAL_LONG_SHORT",
+                "BTC_TOP_POSITION_RATIO",
+                "BTC_TOP_ACCOUNT_RATIO",
+                "BTC_TAKER_RATIO",
+                "BTC_BASIS_ABS",
+            ],
+        ),
     ];
     let mut diagnostics = HashMap::new();
-    for (source, canonical, max_age) in specs {
-        let freshness = db.source_freshness(source, Some(as_of))?;
-        let age = freshness
-            .latest_observed_at
-            .as_deref()
-            .and_then(|value| age_days(value, as_of_time));
-        let fresh = age.is_some_and(|age| age <= max_age);
+    for (source, canonical, max_age, series) in specs {
+        let mut latest_observed_at: Option<String> = None;
+        let mut latest_released_at: Option<String> = None;
+        let mut latest_ingested_at: Option<String> = None;
+        let mut revisions = 0usize;
+        let mut missing_series = Vec::new();
+        let mut stale_series = Vec::new();
+        let mut ages = Vec::new();
+        for name in *series {
+            let state = db.source_series_freshness(source, name, Some(as_of))?;
+            let Some(observed) = state.latest_observed_at else {
+                missing_series.push((*name).to_string());
+                continue;
+            };
+            let age = age_days(&observed, as_of_time);
+            if age.is_none_or(|value| value > *max_age) {
+                stale_series.push((*name).to_string());
+            }
+            if let Some(age) = age {
+                ages.push(age);
+            }
+            latest_observed_at = Some(match latest_observed_at.take() {
+                Some(current) => current.min(observed),
+                None => observed,
+            });
+            if let Some(released) = state.latest_released_at {
+                latest_released_at = Some(match latest_released_at.take() {
+                    Some(current) => current.max(released),
+                    None => released,
+                });
+            }
+            if let Some(ingested) = state.latest_ingested_at {
+                latest_ingested_at = Some(match latest_ingested_at.take() {
+                    Some(current) => current.max(ingested),
+                    None => ingested,
+                });
+            }
+            revisions += state.revisions;
+        }
+        let age = ages.into_iter().max();
+        let fresh = missing_series.is_empty() && stale_series.is_empty() && !series.is_empty();
         context.insert_source(
             canonical,
             SourceState {
                 age_days: age.map(|age| age as f64),
-                missing: freshness.latest_observed_at.is_none(),
-                revised: freshness.revisions > 0,
+                missing: series.len() == missing_series.len(),
+                revised: revisions > 0,
                 fresh,
             },
         );
         diagnostics.insert(
-            canonical.into(),
+            (*canonical).into(),
             SourceDiagnostic {
-                latest_observed_at: freshness.latest_observed_at,
-                latest_released_at: freshness.latest_released_at,
-                latest_ingested_at: freshness.latest_ingested_at,
+                latest_observed_at,
+                latest_released_at,
+                latest_ingested_at,
                 age_days: age,
                 fresh,
-                revisions: freshness.revisions,
+                revisions,
+                expected_series: series.len(),
+                available_series: series.len() - missing_series.len(),
+                missing_series,
+                stale_series,
             },
         );
     }
@@ -1365,6 +1500,11 @@ mod tests {
             rules_evaluated: 0,
             rules_triggered: 0,
             rules_indeterminate: 0,
+            metrics_expected: 0,
+            metrics_available: 0,
+            metrics_usable: 0,
+            missing_metrics: Vec::new(),
+            stale_metrics: Vec::new(),
         };
         assert_eq!(stage_with_hysteresis(67.0, Some(&previous)), 4);
         assert_eq!(stage_with_hysteresis(64.0, Some(&previous)), 3);
@@ -1414,6 +1554,10 @@ mod tests {
         assert_eq!(snapshot.stress, None);
         assert_eq!(snapshot.vulnerability, None);
         assert_eq!(snapshot.resilience, None);
+        assert_eq!(snapshot.confidence, 0.0);
+        assert_eq!(snapshot.data_quality, 0.0);
+        assert_eq!(snapshot.metrics_available, 0);
+        assert_eq!(snapshot.metrics_usable, 0);
         assert!(snapshot
             .rule_hits
             .iter()

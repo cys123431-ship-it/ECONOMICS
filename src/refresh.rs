@@ -58,6 +58,7 @@ pub struct RefreshStatus {
     pub running: bool,
     pub queued: bool,
     mode: Option<RefreshMode>,
+    pub phase: Option<String>,
     pub last_started_at: Option<String>,
     pub last_completed_at: Option<String>,
     pub last_snapshot_as_of: Option<String>,
@@ -101,6 +102,7 @@ impl RefreshControl {
 pub fn start(config: Config) -> RefreshControl {
     let (sender, receiver) = mpsc::sync_channel(1);
     let status = Arc::new(Mutex::new(RefreshStatus::default()));
+    run_cycle(&config, RefreshMode::Fast, true, false, true, &status);
     let worker_status = Arc::clone(&status);
     thread::Builder::new()
         .name("economics-refresh".into())
@@ -119,7 +121,7 @@ fn refresh_loop(
     let macro_interval = Duration::from_secs(config.macro_refresh_minutes().saturating_mul(60));
     let full_interval = Duration::from_secs(config.full_refresh_hours.saturating_mul(3_600));
 
-    run_cycle(&config, RefreshMode::Full, true, true, &status);
+    run_cycle(&config, RefreshMode::Full, true, true, false, &status);
     let mut last_market = Instant::now();
     let mut last_macro = Instant::now();
     let mut last_full = Instant::now();
@@ -132,7 +134,7 @@ fn refresh_loop(
         };
         if matches!(requested, Some(RefreshMode::Full)) {
             with_status(&status, |state| state.queued = false);
-            run_cycle(&config, RefreshMode::Full, true, true, &status);
+            run_cycle(&config, RefreshMode::Full, true, true, false, &status);
             last_market = Instant::now();
             last_macro = Instant::now();
             last_full = Instant::now();
@@ -140,7 +142,7 @@ fn refresh_loop(
         }
 
         if last_full.elapsed() >= full_interval {
-            run_cycle(&config, RefreshMode::Full, true, true, &status);
+            run_cycle(&config, RefreshMode::Full, true, true, false, &status);
             last_market = Instant::now();
             last_macro = Instant::now();
             last_full = Instant::now();
@@ -149,7 +151,14 @@ fn refresh_loop(
 
         let market_due = last_market.elapsed() >= market_interval;
         let macro_due = last_macro.elapsed() >= macro_interval;
-        run_cycle(&config, RefreshMode::Fast, market_due, macro_due, &status);
+        run_cycle(
+            &config,
+            RefreshMode::Fast,
+            market_due,
+            macro_due,
+            false,
+            &status,
+        );
         if market_due {
             last_market = Instant::now();
         }
@@ -164,19 +173,25 @@ fn run_cycle(
     mode: RefreshMode,
     market_due: bool,
     macro_due: bool,
+    force_snapshot: bool,
     status: &Arc<Mutex<RefreshStatus>>,
 ) {
     with_status(status, |state| {
         state.running = true;
         state.mode = Some(mode);
         state.last_started_at = Some(now());
+        state.phase = Some("starting".into());
+        state.attempted = 0;
+        state.stored = 0;
+        state.unchanged = 0;
         state.errors.clear();
     });
 
-    let result = collect_and_calculate(config, mode, market_due, macro_due);
+    let result = collect_and_calculate(config, mode, market_due, macro_due, force_snapshot, status);
     with_status(status, |state| {
         state.running = false;
         state.mode = None;
+        state.phase = None;
         state.last_completed_at = Some(now());
         match result {
             Ok(outcome) => {
@@ -214,72 +229,173 @@ fn collect_and_calculate(
     mode: RefreshMode,
     market_due: bool,
     macro_due: bool,
+    force_snapshot: bool,
+    status: &Arc<Mutex<RefreshStatus>>,
 ) -> Result<RefreshOutcome, String> {
     let db = Db::open(&config.db_path).map_err(|error| format!("database: {error}"))?;
     let start =
         (Utc::now().date_naive() - ChronoDuration::days(INCREMENTAL_LOOKBACK_DAYS)).to_string();
     let mut report = collectors::CollectionReport::default();
+    let mut observations_changed = false;
 
+    update_progress(status, "binance-live", &report);
     merge_result(
         &mut report,
-        "binance",
-        collectors::collect_binance(config, &db),
+        "binance live",
+        collectors::collect_binance_live(config, &db),
     );
+    update_progress(status, "binance-live", &report);
 
     if market_due || matches!(mode, RefreshMode::Full) {
-        if config.fred_api_key.is_some() {
-            report.merge(collect_current_fred(config, &db, &start));
-        }
-        merge_result(
-            &mut report,
-            "treasury",
-            collectors::collect_treasury(config, &db),
-        );
         if config.krx_api_key.is_some() {
+            let before = report.stored;
+            update_progress(status, "krx-latest", &report);
             merge_result(
                 &mut report,
                 "krx latest",
                 live_market::collect_krx_fast(config, &db),
             );
+            observations_changed |= report.stored > before;
+            update_progress(status, "krx-latest", &report);
+        }
+        // The synchronous startup prime waits only for live BTC and newest KRX rows.
+        // Slower history/macro feeds run immediately afterwards on the background worker.
+        if !force_snapshot {
+            let before = report.stored;
+            update_progress(status, "binance-hourly", &report);
+            merge_result(
+                &mut report,
+                "binance hourly",
+                collectors::collect_binance(config, &db),
+            );
+            observations_changed |= report.stored > before;
+            update_progress(status, "binance-hourly", &report);
+            if config.fred_api_key.is_some() {
+                let before = report.stored;
+                update_progress(status, "fred-current", &report);
+                report.merge(collect_current_fred(config, &db, &start));
+                observations_changed |= report.stored > before;
+                update_progress(status, "fred-current", &report);
+            }
+            let before = report.stored;
+            update_progress(status, "treasury-auctions", &report);
+            merge_result(
+                &mut report,
+                "treasury",
+                collectors::collect_treasury(config, &db),
+            );
+            observations_changed |= report.stored > before;
+            update_progress(status, "treasury-auctions", &report);
         }
     }
 
     if (macro_due || matches!(mode, RefreshMode::Full)) && config.ecos_api_key.is_some() {
+        let before = report.stored;
+        update_progress(status, "bok-ecos", &report);
         merge_result(
             &mut report,
             "ecos",
             collectors::collect_ecos(config, &db, None),
         );
+        observations_changed |= report.stored > before;
+        update_progress(status, "bok-ecos", &report);
     }
 
     if matches!(mode, RefreshMode::Full) {
+        let before = report.stored;
+        let official_start = if db
+            .latest("bis", "GLOBAL_DOLLAR_CREDIT", None)
+            .map_err(|error| format!("database: {error}"))?
+            .is_some()
+            && db
+                .latest("ofr_fsi", "OFR_FSI", None)
+                .map_err(|error| format!("database: {error}"))?
+                .is_some()
+            && db
+                .latest("nyfed", "DEALER_FAILS", None)
+                .map_err(|error| format!("database: {error}"))?
+                .is_some()
+        {
+            (Utc::now().date_naive() - ChronoDuration::days(400)).to_string()
+        } else {
+            "2000-01-01".into()
+        };
+        update_progress(status, "built-in-official-feeds", &report);
+        merge_result(
+            &mut report,
+            "built-in official feeds",
+            collectors::collect_builtin_official(config, &db, &official_start),
+        );
+        observations_changed |= report.stored > before;
+        update_progress(status, "built-in-official-feeds", &report);
         if config.krx_api_key.is_some() {
+            let before = report.stored;
+            update_progress(status, "krx-all-31-services", &report);
             merge_result(
                 &mut report,
                 "krx history",
                 collectors::collect_krx(config, &db, None),
             );
+            observations_changed |= report.stored > before;
+            update_progress(status, "krx-all-31-services", &report);
+            let before = report.stored;
+            update_progress(status, "krx-latest-confirmation", &report);
             merge_result(
                 &mut report,
                 "krx latest",
                 live_market::collect_krx_fast(config, &db),
             );
+            observations_changed |= report.stored > before;
+            update_progress(status, "krx-latest-confirmation", &report);
         }
+        let before = report.stored;
+        update_progress(status, "official-adapters", &report);
         merge_result(
             &mut report,
             "official adapters",
             collectors::collect_configured_adapters(config, &db),
         );
+        observations_changed |= report.stored > before;
+        update_progress(status, "official-adapters", &report);
         // ALFRED is historical/revision data, not a live feed. It is intentionally excluded
         // from automatic refresh so vintage endpoint failures cannot make current data look stale.
         // Use `collect-alfred` explicitly before historical backtests when required.
     }
 
-    let snapshot = engine::run(&db, config).map_err(|error| format!("rule engine: {error}"))?;
+    let snapshot_as_of = if force_snapshot
+        || observations_changed
+        || db
+            .latest_snapshot_as_of()
+            .map_err(|error| format!("database: {error}"))?
+            .is_none()
+    {
+        update_progress(status, "rule-engine", &report);
+        engine::run(&db, config)
+            .map_err(|error| format!("rule engine: {error}"))?
+            .as_of
+    } else {
+        db.latest_snapshot_as_of()
+            .map_err(|error| format!("database: {error}"))?
+            .ok_or_else(|| "no snapshot is available".to_string())?
+    };
     Ok(RefreshOutcome {
         report,
-        snapshot_as_of: snapshot.as_of,
+        snapshot_as_of,
     })
+}
+
+fn update_progress(
+    status: &Arc<Mutex<RefreshStatus>>,
+    phase: &str,
+    report: &collectors::CollectionReport,
+) {
+    with_status(status, |state| {
+        state.phase = Some(phase.into());
+        state.attempted = report.attempted;
+        state.stored = report.stored;
+        state.unchanged = report.unchanged;
+        state.errors = report.errors.clone();
+    });
 }
 
 fn merge_result(

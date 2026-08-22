@@ -518,10 +518,19 @@ function renderSources(sources) {
   clear(container);
   for (const [name, state] of Object.entries(sources).sort((a, b) => a[0].localeCompare(b[0]))) {
     const chip = el('div', `source-chip${state?.fresh ? ' fresh' : ''}`);
+    const expected = Number(state?.expected_series || 0);
+    const available = Number(state?.available_series || 0);
+    const coverage = expected > 0 ? ` ${available}/${expected}` : '';
     chip.append(
       el('strong', '', name),
-      document.createTextNode(state?.fresh ? '  ● LIVE' : '  ○ WAIT')
+      document.createTextNode(state?.fresh ? `  ● LIVE${coverage}` : `  ○ PARTIAL${coverage}`)
     );
+    const missing = Array.isArray(state?.missing_series) ? state.missing_series : [];
+    const stale = Array.isArray(state?.stale_series) ? state.stale_series : [];
+    chip.title = [
+      missing.length ? `미수집: ${missing.join(', ')}` : '',
+      stale.length ? `지연: ${stale.join(', ')}` : ''
+    ].filter(Boolean).join(' / ');
     container.append(chip);
   }
 }
@@ -735,7 +744,7 @@ async function loadRefreshStatus() {
       $('connectionDot').className = 'status-dot working';
       $('connectionText').textContent = status.queued
         ? 'REFRESH QUEUED'
-        : 'COLLECTING LIVE DATA';
+        : `COLLECTING ${status.phase || 'DATA'} · ${status.stored || 0}/${status.attempted || 0}`;
     } else {
       $('connectionDot').className = dashboardErrors.length
         ? 'status-dot offline'

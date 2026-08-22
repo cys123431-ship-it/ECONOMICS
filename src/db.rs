@@ -2,6 +2,22 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
+fn allow_historical_release_backfill(as_of: Option<&str>) -> bool {
+    let Some(as_of) = as_of else {
+        return false;
+    };
+    let parsed = chrono::DateTime::parse_from_rfc3339(as_of)
+        .ok()
+        .map(|value| value.with_timezone(&chrono::Utc))
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(as_of.get(..10).unwrap_or(as_of), "%Y-%m-%d")
+                .ok()
+                .and_then(|date| date.and_hms_opt(23, 59, 59))
+                .map(|value| value.and_utc())
+        });
+    parsed.is_some_and(|value| value < chrono::Utc::now() - chrono::Duration::days(1))
+}
+
 #[derive(Clone, Debug)]
 pub struct NewObservation {
     pub source: String,
@@ -48,6 +64,12 @@ pub struct SourceFreshness {
     pub revisions: usize,
 }
 
+#[derive(Clone, Debug)]
+pub struct SeriesStatus {
+    pub latest_observed_at: String,
+    pub checked_at: String,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -92,6 +114,26 @@ impl Db {
               payload TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_snapshots_v2_asof ON snapshots_v2(as_of DESC,ts DESC);
+
+            CREATE TABLE IF NOT EXISTS live_quotes(
+              source TEXT NOT NULL,
+              series TEXT NOT NULL,
+              entity TEXT NOT NULL DEFAULT '',
+              observed_at TEXT NOT NULL,
+              value REAL NOT NULL,
+              source_asof TEXT,
+              ingested_at TEXT NOT NULL,
+              metadata TEXT NOT NULL DEFAULT 'null',
+              PRIMARY KEY(source,series,entity)
+            );
+
+            CREATE TABLE IF NOT EXISTS series_status(
+              source TEXT NOT NULL,
+              series TEXT NOT NULL,
+              latest_observed_at TEXT NOT NULL,
+              checked_at TEXT NOT NULL,
+              PRIMARY KEY(source,series)
+            );
             "#,
         )?;
 
@@ -163,18 +205,126 @@ impl Db {
         Ok(changed == 1)
     }
 
+    pub fn put_live_quote(&self, observation: &NewObservation) -> Result<bool> {
+        if !observation.value.is_finite() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(Box::new(
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "non-finite live quote"),
+            )));
+        }
+        let previous = self.latest_live_quote(
+            &observation.source,
+            &observation.series,
+            &observation.entity,
+        )?;
+        let ingested_at = chrono::Utc::now().to_rfc3339();
+        let metadata =
+            serde_json::to_string(&observation.metadata).unwrap_or_else(|_| "null".into());
+        self.conn.execute(
+            r#"
+            INSERT INTO live_quotes(source,series,entity,observed_at,value,source_asof,ingested_at,metadata)
+            VALUES(?1,?2,?3,?4,?5,?6,?7,?8)
+            ON CONFLICT(source,series,entity) DO UPDATE SET
+              observed_at=excluded.observed_at,
+              value=excluded.value,
+              source_asof=excluded.source_asof,
+              ingested_at=excluded.ingested_at,
+              metadata=excluded.metadata
+            "#,
+            params![
+                observation.source,
+                observation.series,
+                observation.entity,
+                observation.observed_at,
+                observation.value,
+                observation.source_asof,
+                ingested_at,
+                metadata
+            ],
+        )?;
+        Ok(previous.is_none_or(|point| {
+            point.observed_at != observation.observed_at
+                || (point.value - observation.value).abs() > f64::EPSILON
+        }))
+    }
+
+    pub fn latest_live_quote(
+        &self,
+        source: &str,
+        series: &str,
+        entity: &str,
+    ) -> Result<Option<Point>> {
+        self.conn
+            .query_row(
+                "SELECT observed_at,value,NULL,source_asof,ingested_at FROM live_quotes WHERE source=?1 AND series=?2 AND entity=?3",
+                params![source, series, entity],
+                |row| {
+                    Ok(Point {
+                        observed_at: row.get(0)?,
+                        value: row.get(1)?,
+                        released_at: row.get(2)?,
+                        source_asof: row.get(3)?,
+                        ingested_at: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
+    pub fn mark_series_checked(
+        &self,
+        source: &str,
+        series: &str,
+        latest_observed_at: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO series_status(source,series,latest_observed_at,checked_at)
+            VALUES(?1,?2,?3,?4)
+            ON CONFLICT(source,series) DO UPDATE SET
+              latest_observed_at=excluded.latest_observed_at,
+              checked_at=excluded.checked_at
+            "#,
+            params![
+                source,
+                series,
+                latest_observed_at,
+                chrono::Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn series_status(&self, source: &str, series: &str) -> Result<Option<SeriesStatus>> {
+        self.conn
+            .query_row(
+                "SELECT latest_observed_at,checked_at FROM series_status WHERE source=?1 AND series=?2",
+                params![source, series],
+                |row| {
+                    Ok(SeriesStatus {
+                        latest_observed_at: row.get(0)?,
+                        checked_at: row.get(1)?,
+                    })
+                },
+            )
+            .optional()
+    }
+
     pub fn latest(&self, source: &str, series: &str, as_of: Option<&str>) -> Result<Option<Point>> {
+        let allow_backfill = allow_historical_release_backfill(as_of);
         self.conn
             .query_row(
                 r#"
                 SELECT observed_at,value,released_at,source_asof,ingested_at
                 FROM observations_v2
                 WHERE source=?1 AND series=?2
-                  AND (?3 IS NULL OR COALESCE(released_at,ingested_at) <= ?3)
-                ORDER BY observed_at DESC,COALESCE(released_at,ingested_at) DESC,revision_id DESC
+                  AND (?3 IS NULL OR (
+                    COALESCE(released_at,ingested_at) <= ?3
+                    AND (ingested_at <= ?3 OR (?4 AND released_at IS NOT NULL))
+                  ))
+                ORDER BY observed_at DESC,COALESCE(released_at,ingested_at) DESC,ingested_at DESC,revision_id DESC
                 LIMIT 1
                 "#,
-                params![source, series, as_of],
+                params![source, series, as_of, allow_backfill],
                 |row| {
                     Ok(Point {
                         observed_at: row.get(0)?,
@@ -195,53 +345,70 @@ impl Db {
         limit: usize,
         as_of: Option<&str>,
     ) -> Result<Vec<Point>> {
+        let allow_backfill = allow_historical_release_backfill(as_of);
         let mut statement = self.conn.prepare(
             r#"
             SELECT observed_at,value,released_at,source_asof,ingested_at FROM (
               SELECT observed_at,value,released_at,source_asof,ingested_at,
                      ROW_NUMBER() OVER (
                        PARTITION BY entity,observed_at
-                       ORDER BY COALESCE(released_at,ingested_at) DESC,revision_id DESC
+                       ORDER BY COALESCE(released_at,ingested_at) DESC,ingested_at DESC,revision_id DESC
                      ) AS revision_rank
               FROM observations_v2
               WHERE source=?1 AND series=?2
-                AND (?3 IS NULL OR COALESCE(released_at,ingested_at) <= ?3)
+                AND (?3 IS NULL OR (
+                  COALESCE(released_at,ingested_at) <= ?3
+                  AND (ingested_at <= ?3 OR (?5 AND released_at IS NOT NULL))
+                ))
             )
             WHERE revision_rank=1
             ORDER BY observed_at DESC
             LIMIT ?4
             "#,
         )?;
-        let rows = statement.query_map(params![source, series, as_of, limit as i64], |row| {
-            Ok(Point {
-                observed_at: row.get(0)?,
-                value: row.get(1)?,
-                released_at: row.get(2)?,
-                source_asof: row.get(3)?,
-                ingested_at: row.get(4)?,
-            })
-        })?;
+        let rows = statement.query_map(
+            params![source, series, as_of, limit as i64, allow_backfill],
+            |row| {
+                Ok(Point {
+                    observed_at: row.get(0)?,
+                    value: row.get(1)?,
+                    released_at: row.get(2)?,
+                    source_asof: row.get(3)?,
+                    ingested_at: row.get(4)?,
+                })
+            },
+        )?;
         let mut points = rows.collect::<Result<Vec<_>>>()?;
         points.reverse();
         Ok(points)
     }
 
-    pub fn source_freshness(&self, source: &str, as_of: Option<&str>) -> Result<SourceFreshness> {
+    pub fn source_series_freshness(
+        &self,
+        source: &str,
+        series: &str,
+        as_of: Option<&str>,
+    ) -> Result<SourceFreshness> {
+        let allow_backfill = allow_historical_release_backfill(as_of);
         self.conn.query_row(
             r#"
             SELECT MAX(observed_at),MAX(max_released_at),MAX(max_ingested_at),
                    COALESCE(SUM(CASE WHEN revision_count > 1 THEN revision_count - 1 ELSE 0 END),0)
             FROM (
-                SELECT series,entity,observed_at,
+                SELECT entity,observed_at,
                        MAX(released_at) AS max_released_at,
                        MAX(ingested_at) AS max_ingested_at,
-                       COUNT(*) AS revision_count
+                       COUNT(DISTINCT printf('%.17g',value)) AS revision_count
                 FROM observations_v2
-                WHERE source=?1 AND (?2 IS NULL OR COALESCE(released_at,ingested_at) <= ?2)
-                GROUP BY series,entity,observed_at
+                WHERE source=?1 AND series=?2
+                  AND (?3 IS NULL OR (
+                    COALESCE(released_at,ingested_at) <= ?3
+                    AND (ingested_at <= ?3 OR (?4 AND released_at IS NOT NULL))
+                  ))
+                GROUP BY entity,observed_at
             )
             "#,
-            params![source, as_of],
+            params![source, series, as_of, allow_backfill],
             |row| {
                 Ok(SourceFreshness {
                     latest_observed_at: row.get(0)?,
@@ -285,6 +452,16 @@ impl Db {
             .optional()
     }
 
+    pub fn latest_snapshot_as_of(&self) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT as_of FROM snapshots_v2 ORDER BY as_of DESC,ts DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
     pub fn latest_snapshot_before(&self, as_of: &str) -> Result<Option<String>> {
         self.conn
             .query_row(
@@ -308,6 +485,9 @@ mod tests {
         first.released_at = Some("2020-02-01T00:00:00Z".into());
         first.revision_id = Some("v1".into());
         assert!(db.put(&first).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let first_as_of = chrono::Utc::now().to_rfc3339();
+        std::thread::sleep(std::time::Duration::from_millis(5));
         let mut revised = first.clone();
         revised.value = 2.0;
         revised.released_at = Some("2020-03-01T00:00:00Z".into());
@@ -315,7 +495,7 @@ mod tests {
         assert!(db.put(&revised).unwrap());
 
         assert_eq!(
-            db.latest("fred", "X", Some("2020-02-15T00:00:00Z"))
+            db.latest("fred", "X", Some(&first_as_of))
                 .unwrap()
                 .unwrap()
                 .value,
@@ -323,5 +503,71 @@ mod tests {
         );
         assert_eq!(db.latest("fred", "X", None).unwrap().unwrap().value, 2.0);
         assert_eq!(db.recent("fred", "X", 10, None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn newer_ingestion_wins_when_release_times_match_even_if_value_is_lower() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.db")).unwrap();
+        let mut first = NewObservation::simple("krx", "X", "2026-08-20", 200.0);
+        first.released_at = Some("2026-08-21T00:00:00Z".into());
+        first.revision_id = Some("z-old".into());
+        assert!(db.put(&first).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut revised = first.clone();
+        revised.value = 100.0;
+        revised.revision_id = Some("a-new".into());
+        assert!(db.put(&revised).unwrap());
+
+        assert_eq!(db.latest("krx", "X", None).unwrap().unwrap().value, 100.0);
+        assert_eq!(db.recent("krx", "X", 10, None).unwrap()[0].value, 100.0);
+    }
+
+    #[test]
+    fn revision_diagnostics_count_distinct_values_not_duplicate_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.db")).unwrap();
+        let mut point = NewObservation::simple("fred", "X", "2026-08-20", 1.0);
+        point.revision_id = Some("first".into());
+        assert!(db.put(&point).unwrap());
+        point.revision_id = Some("duplicate-value".into());
+        assert!(db.put(&point).unwrap());
+        assert_eq!(
+            db.source_series_freshness("fred", "X", None)
+                .unwrap()
+                .revisions,
+            0
+        );
+
+        point.value = 0.5;
+        point.revision_id = Some("real-revision".into());
+        assert!(db.put(&point).unwrap());
+        assert_eq!(
+            db.source_series_freshness("fred", "X", None)
+                .unwrap()
+                .revisions,
+            1
+        );
+    }
+
+    #[test]
+    fn historical_backtests_accept_explicit_release_dates_but_not_unknown_releases() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.db")).unwrap();
+        let mut vintage = NewObservation::simple("alfred", "X", "2020-01-01", 1.0);
+        vintage.released_at = Some("2020-02-01T00:00:00Z".into());
+        vintage.revision_id = Some("2020-02-01".into());
+        assert!(db.put(&vintage).unwrap());
+        assert!(db
+            .latest("alfred", "X", Some("2020-02-02T00:00:00Z"))
+            .unwrap()
+            .is_some());
+
+        let unknown_release = NewObservation::simple("fred", "Y", "2020-01-01", 1.0);
+        assert!(db.put(&unknown_release).unwrap());
+        assert!(db
+            .latest("fred", "Y", Some("2020-02-02T00:00:00Z"))
+            .unwrap()
+            .is_none());
     }
 }

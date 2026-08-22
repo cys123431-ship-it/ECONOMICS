@@ -4,6 +4,7 @@ mod dashboard;
 mod db;
 mod dsl;
 mod engine;
+mod krx_analytics;
 mod live_market;
 mod refresh;
 mod rulebook;
@@ -152,6 +153,12 @@ fn collect_public(config: &Config, db: &Db) -> CollectionReport {
 
 fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dyn Error>> {
     let mut report = collect_public(config, db);
+    match collectors::collect_builtin_official(config, db, "2000-01-01") {
+        Ok(result) => report.merge(result),
+        Err(error) => report
+            .errors
+            .push(format!("built-in official feeds: {error}")),
+    }
     if config.ecos_api_key.is_some() {
         match collectors::collect_ecos(config, db, None) {
             Ok(result) => report.merge(result),
