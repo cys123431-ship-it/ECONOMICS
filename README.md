@@ -1,8 +1,12 @@
 # ECONOMICS Radar
 
-> v0.4.6: latest-market integrity, corrected KRX derivatives analytics, coherent snapshots, and explicit data-quality coverage.
+> v0.4.7: RFC3339 timestamp normalization hotfix on top of the v0.4.6 data-integrity release.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.4.7
+
+v0.4.7은 같은 UTC 시각의 `Z`·소수초·`+00:00` 표기를 문자열이 아닌 실제 시간값으로 비교합니다. 최신 KRX 파생값이 같은 초에 생성된 스냅샷에서 이전 개정값으로 보일 수 있던 경계를 수정하고 회귀 테스트를 추가했습니다.
 
 ## v0.4.6
 
@@ -78,7 +82,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.4.6-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.4.7-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env

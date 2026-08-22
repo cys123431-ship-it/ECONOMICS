@@ -318,10 +318,12 @@ impl Db {
                 FROM observations_v2
                 WHERE source=?1 AND series=?2
                   AND (?3 IS NULL OR (
-                    COALESCE(released_at,ingested_at) <= ?3
-                    AND (ingested_at <= ?3 OR (?4 AND released_at IS NOT NULL))
+                    julianday(COALESCE(released_at,ingested_at)) <= julianday(?3)
+                    AND (julianday(ingested_at) <= julianday(?3) OR (?4 AND released_at IS NOT NULL))
                   ))
-                ORDER BY observed_at DESC,COALESCE(released_at,ingested_at) DESC,ingested_at DESC,revision_id DESC
+                ORDER BY julianday(observed_at) DESC,
+                         julianday(COALESCE(released_at,ingested_at)) DESC,
+                         julianday(ingested_at) DESC,revision_id DESC
                 LIMIT 1
                 "#,
                 params![source, series, as_of, allow_backfill],
@@ -352,17 +354,18 @@ impl Db {
               SELECT observed_at,value,released_at,source_asof,ingested_at,
                      ROW_NUMBER() OVER (
                        PARTITION BY entity,observed_at
-                       ORDER BY COALESCE(released_at,ingested_at) DESC,ingested_at DESC,revision_id DESC
+                       ORDER BY julianday(COALESCE(released_at,ingested_at)) DESC,
+                                julianday(ingested_at) DESC,revision_id DESC
                      ) AS revision_rank
               FROM observations_v2
               WHERE source=?1 AND series=?2
                 AND (?3 IS NULL OR (
-                  COALESCE(released_at,ingested_at) <= ?3
-                  AND (ingested_at <= ?3 OR (?5 AND released_at IS NOT NULL))
+                  julianday(COALESCE(released_at,ingested_at)) <= julianday(?3)
+                  AND (julianday(ingested_at) <= julianday(?3) OR (?5 AND released_at IS NOT NULL))
                 ))
             )
             WHERE revision_rank=1
-            ORDER BY observed_at DESC
+            ORDER BY julianday(observed_at) DESC
             LIMIT ?4
             "#,
         )?;
@@ -392,18 +395,18 @@ impl Db {
         let allow_backfill = allow_historical_release_backfill(as_of);
         self.conn.query_row(
             r#"
-            SELECT MAX(observed_at),MAX(max_released_at),MAX(max_ingested_at),
+            SELECT MAX(observed_at),datetime(MAX(max_released_jd)),datetime(MAX(max_ingested_jd)),
                    COALESCE(SUM(CASE WHEN revision_count > 1 THEN revision_count - 1 ELSE 0 END),0)
             FROM (
                 SELECT entity,observed_at,
-                       MAX(released_at) AS max_released_at,
-                       MAX(ingested_at) AS max_ingested_at,
+                       MAX(julianday(released_at)) AS max_released_jd,
+                       MAX(julianday(ingested_at)) AS max_ingested_jd,
                        COUNT(DISTINCT printf('%.17g',value)) AS revision_count
                 FROM observations_v2
                 WHERE source=?1 AND series=?2
                   AND (?3 IS NULL OR (
-                    COALESCE(released_at,ingested_at) <= ?3
-                    AND (ingested_at <= ?3 OR (?4 AND released_at IS NOT NULL))
+                    julianday(COALESCE(released_at,ingested_at)) <= julianday(?3)
+                    AND (julianday(ingested_at) <= julianday(?3) OR (?4 AND released_at IS NOT NULL))
                   ))
                 GROUP BY entity,observed_at
             )
@@ -569,5 +572,28 @@ mod tests {
             .latest("fred", "Y", Some("2020-02-02T00:00:00Z"))
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn equivalent_rfc3339_offsets_and_fractional_seconds_are_compared_as_times() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.db")).unwrap();
+        let mut point = NewObservation::simple("krx", "X", "2026-08-21", 1.0);
+        point.released_at = Some("2026-08-22T02:06:02Z".into());
+        point.revision_id = Some("fast".into());
+        assert!(db.put(&point).unwrap());
+        db.conn
+            .execute(
+                "UPDATE observations_v2 SET ingested_at='2026-08-22T02:06:02.100+00:00' WHERE source='krx' AND series='X'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            db.latest("krx", "X", Some("2026-08-22T02:06:02.501+00:00"))
+                .unwrap()
+                .unwrap()
+                .value,
+            1.0
+        );
     }
 }
