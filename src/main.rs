@@ -10,6 +10,7 @@ mod refresh;
 mod rulebook;
 mod scoring;
 mod server;
+mod toss_market;
 
 use collectors::CollectionReport;
 use config::Config;
@@ -63,6 +64,7 @@ fn usage() {
            collect-ecos [series]\n\
            collect-krx [api-id]\n\
            collect-krx-live\n\
+           collect-toss-indices\n\
            collect-official\n\
            collect-all [start]\n\
            run [as-of]\n\
@@ -173,6 +175,12 @@ fn collect_official(config: &Config, db: &Db) -> Result<CollectionReport, Box<dy
         match live_market::collect_krx_fast(config, db) {
             Ok(result) => report.merge(result),
             Err(error) => report.errors.push(format!("krx latest: {error}")),
+        }
+    }
+    if config.has_tossinvest_credentials() {
+        match toss_market::collect_indices(config, db) {
+            Ok(result) => report.merge(result),
+            Err(error) => report.errors.push(format!("toss indices: {error}")),
         }
     }
     match collectors::collect_configured_adapters(config, db) {
@@ -288,6 +296,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "collect-krx-live" => {
             let db = Db::open(&config.db_path)?;
             print_report(&live_market::collect_krx_fast(&config, &db)?)?;
+        }
+        "collect-toss-indices" => {
+            let db = Db::open(&config.db_path)?;
+            print_report(&toss_market::collect_indices(&config, &db)?)?;
         }
         "collect-all" => {
             let db = Db::open(&config.db_path)?;

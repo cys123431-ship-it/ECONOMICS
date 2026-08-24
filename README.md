@@ -1,8 +1,23 @@
 # ECONOMICS Radar
 
-> v0.5.0: Bloomberg-density raw market terminal and deterministic crisis-exit control room.
+> v0.5.1: official Toss intraday KOSPI/KOSDAQ with verified KRX EOD fallback.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.5.1
+
+v0.5.1은 토스증권 공식 Open API의 KOSPI·KOSDAQ 현재지수를 선택형 장중 소스로 추가하고, 기존 KRX 일별값은 이력·EOD 자동 대체값으로 유지합니다.
+
+- 토스증권 `KOSPI,KOSDAQ` 현재지수를 한 요청으로 30초마다 갱신
+- 토스 원본 `lastPrice`와 RFC3339 데이터 시각을 그대로 저장·표시
+- 토스 시각이 KRX EOD보다 실제로 최신일 때만 화면에 적용
+- 같은 날짜의 토스 장중값과 KRX EOD를 중복 일간 관측치로 계산하지 않고 전일 KRX 종가와 비교
+- `LIVE`, `DELAYED`, `SESSION CLOSE`, `LATEST CLOSE`, `STALE` 상태 구분
+- OAuth 토큰 24시간 캐시, 401 한 차례 재발급, 허용 IP·요청 제한 오류의 비밀값 비노출
+- 날짜 문자열과 RFC3339 시각의 최신성 비교를 실제 UTC 시간 비교로 수정
+- 토스 키가 없거나 수집에 실패하면 최신 검증 KRX EOD를 계속 표시
+
+설계 근거와 공식 출처는 [KOSPI·KOSDAQ 장중 지수 수신 검토](docs/KOSPI_KOSDAQ_REALTIME_DATA_RESEARCH.md)에 정리했습니다.
 
 ## v0.5.0
 
@@ -70,7 +85,7 @@ v0.4.3은 화면에 오래된 값을 최신 시세처럼 보여 주던 경로와
 
 기본값은 API 성격과 호출 부담에 맞춰 소스별로 분리됩니다.
 
-- Binance 공개 시장 데이터: **30초**
+- Binance 공개 시장 데이터와 토스증권 KOSPI·KOSDAQ 현재지수: **30초**
 - 현재 FRED / Treasury / KRX 최신 공개 일별값: **5분**
 - ECOS: **30분**
 - KRX 전체 이력 / 설정형 공식 어댑터: **6시간**
@@ -91,7 +106,7 @@ ECONOMICS_FULL_REFRESH_HOURS=6
 
 KRX Open API의 `KOSPI 시리즈 일별시세정보`, `KOSDAQ 시리즈 일별시세정보`는 **일별 데이터**입니다. v0.4.3은 더 이상 임의로 이틀 전까지만 조회하지 않고 **한국시간 기준 오늘 → 직전 영업일 순서로 가장 최근 공개된 행을 먼저 확인**합니다. 다만 KRX Open API가 장중 실시간 지수 틱을 제공하는 것은 아니므로, 장중에는 가장 최근 공개된 EOD 값이 표시될 수 있습니다.
 
-프로그램은 각 숫자에 `LIVE`, `TODAY`, `LATEST EOD`, `STALE Nd` 같은 freshness 상태와 기준일을 표시해 오래된 값을 실시간 시세처럼 보이지 않게 합니다. 진짜 장중 실시간 KOSPI/KOSDAQ이 필요하면 KRX가 허용한 실시간/지연시세 공급계약 또는 승인된 벤더 데이터가 별도로 필요합니다. 이 프로그램은 비공식 웹스크래핑으로 실시간값을 위조하지 않습니다.
+토스증권 Open API 키가 설정되면 프로그램은 공식 `KOSPI,KOSDAQ` 현재지수를 장중 30초마다 조회합니다. 토스 키가 없거나 실패하면 KRX 최신 검증 EOD로 자동 대체합니다. 각 숫자에는 `LIVE`, `DELAYED`, `SESSION CLOSE`, `LATEST CLOSE`, `LATEST VERIFIED`, `STALE` 같은 상태와 원본 기준시각을 표시하며 비공식 웹스크래핑으로 실시간값을 만들지 않습니다.
 
 ### FRED / ALFRED
 
@@ -99,7 +114,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.5.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.5.1-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -114,11 +129,14 @@ Copy-Item .env.example .env
 FRED_API_KEY=
 ECOS_API_KEY=
 KRX_API_KEY=
+TOSSINVEST_CLIENT_ID=
+TOSSINVEST_CLIENT_SECRET=
 ```
 
 - `FRED_API_KEY`: FRED 수집 및 명시적 ALFRED 수집
 - `ECOS_API_KEY`: 한국은행 ECOS
 - `KRX_API_KEY`: KRX Open API 인증키. 서비스별 활용승인이 별도로 필요
+- `TOSSINVEST_CLIENT_ID`, `TOSSINVEST_CLIENT_SECRET`: 토스증권 WTS > 설정 > Open API에서 발급. 지수 조회에는 계좌번호가 필요 없지만 이 노트북의 공인 IP를 허용 목록에 등록해야 함
 - `OFFICIAL_ADAPTERS_FILE`: 내장되지 않은 CFTC·TIC·FSC 등 공식 JSON 피드를 추가할 때만 쓰는 선택 설정
 
 실제 키는 GitHub나 Release ZIP에 포함되지 않습니다.
@@ -135,6 +153,7 @@ collect-public
 collect-ecos [series]
 collect-krx [api-id]
 collect-krx-live
+collect-toss-indices
 collect-official
 collect-all [start]
 run [as-of]
@@ -144,6 +163,8 @@ demo
 ```
 
 `collect-krx-live`는 KOSPI·KOSDAQ 등 화면에 직접 쓰이는 KRX 핵심 계열을 오늘부터 역순으로 빠르게 확인합니다. `collect-krx`는 31개 승인 서비스의 일별 이력·파생 지표를 수집합니다.
+
+`collect-toss-indices`는 토스증권 공식 시장지표 API에서 KOSPI·KOSDAQ 현재지수를 조회합니다. 두 토스 키가 설정되지 않으면 네트워크 호출을 하지 않습니다.
 
 인자 없이 `EconomicsRadar.exe`를 실행하면 `launch`와 동일하게 로컬 서버를 시작하고 기본 브라우저를 엽니다. 기본 주소는 `http://127.0.0.1:8765`입니다.
 

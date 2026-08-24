@@ -1,5 +1,5 @@
 use crate::db::{Db, Point};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
 use serde::Serialize;
 
 #[derive(Clone, Copy)]
@@ -83,8 +83,14 @@ const FRED_USD: &[SeriesRef] = &[series("fred", "DTWEXBGS")];
 const TREASURY_BTC: &[SeriesRef] = &[series("treasury", "AUCTION_BTC")];
 const USD_KRW: &[SeriesRef] = &[series("ecos", "KR_USD_KRW"), series("fred", "DEXKOUS")];
 const KR_BASE_RATE: &[SeriesRef] = &[series("ecos", "KR_BASE_RATE")];
-const KOSPI: &[SeriesRef] = &[series("krx", "KRX_KOSPI_CLOSE")];
-const KOSDAQ: &[SeriesRef] = &[series("krx", "KRX_KOSDAQ_CLOSE")];
+const KOSPI: &[SeriesRef] = &[
+    series("tossinvest", "KOSPI_INDEX"),
+    series("krx", "KRX_KOSPI_CLOSE"),
+];
+const KOSDAQ: &[SeriesRef] = &[
+    series("tossinvest", "KOSDAQ_INDEX"),
+    series("krx", "KRX_KOSDAQ_CLOSE"),
+];
 const KOSPI_BREADTH: &[SeriesRef] = &[series("krx", "KRX_KOSPI_BREADTH")];
 const KOSDAQ_BREADTH: &[SeriesRef] = &[series("krx", "KRX_KOSDAQ_BREADTH")];
 const KRX_BREADTH: &[SeriesRef] = &[series("krx", "KRX_BREADTH")];
@@ -1579,18 +1585,59 @@ pub fn build_at(db: &Db, as_of: Option<&str>) -> rusqlite::Result<DashboardData>
     Ok(DashboardData { indicators })
 }
 
+fn timestamp(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(|value| value.with_timezone(&Utc))
+        .or_else(|| {
+            NaiveDate::parse_from_str(value.get(..10).unwrap_or(value), "%Y-%m-%d")
+                .ok()
+                .and_then(|date| date.and_hms_opt(0, 0, 0))
+                .map(|value| value.and_utc())
+        })
+}
+
 fn point_is_newer(candidate: &Point, selected: &Point) -> bool {
-    (
-        candidate.observed_at.as_str(),
-        candidate.ingested_at.as_str(),
-    ) > (selected.observed_at.as_str(), selected.ingested_at.as_str())
+    match (
+        timestamp(&candidate.observed_at),
+        timestamp(&selected.observed_at),
+    ) {
+        (Some(candidate_time), Some(selected_time)) if candidate_time != selected_time => {
+            candidate_time > selected_time
+        }
+        _ => match (
+            timestamp(&candidate.ingested_at),
+            timestamp(&selected.ingested_at),
+        ) {
+            (Some(candidate_time), Some(selected_time)) => candidate_time > selected_time,
+            _ => candidate.ingested_at > selected.ingested_at,
+        },
+    }
+}
+
+fn source_timestamp(point: &Point) -> Option<DateTime<Utc>> {
+    point
+        .source_asof
+        .as_deref()
+        .and_then(timestamp)
+        .or_else(|| point.released_at.as_deref().and_then(timestamp))
+        .or_else(|| timestamp(&point.ingested_at))
+}
+
+fn live_entity(candidate: SeriesRef) -> Option<&'static str> {
+    match (candidate.source, candidate.series) {
+        ("binance", _) => Some("BTCUSDT"),
+        ("tossinvest", "KOSPI_INDEX") => Some("KOSPI"),
+        ("tossinvest", "KOSDAQ_INDEX") => Some("KOSDAQ"),
+        _ => None,
+    }
 }
 
 fn cadence(selected: Option<SeriesRef>) -> &'static str {
     let Some(selected) = selected else {
         return "UNKNOWN";
     };
-    if selected.source == "binance" {
+    if selected.source == "binance" || selected.source == "tossinvest" {
         return "INTRADAY";
     }
     if selected.source == "krx" || selected.source == "ecos" && selected.series == "KR_USD_KRW" {
@@ -1627,17 +1674,39 @@ fn freshness(
     let Some(point) = point else {
         return Ok("NO DATA".into());
     };
-    if selected.is_some_and(|value| value.source.eq_ignore_ascii_case("binance")) {
-        if let Ok(ingested) = DateTime::parse_from_rfc3339(&point.ingested_at) {
-            let age = Utc::now()
-                .signed_duration_since(ingested.with_timezone(&Utc))
-                .num_seconds();
-            return Ok(if age <= 120 {
-                "LIVE".into()
-            } else if age <= 600 {
-                "DELAYED".into()
-            } else {
+    if let Some(selected) = selected.filter(|value| {
+        value.source.eq_ignore_ascii_case("binance")
+            || value.source.eq_ignore_ascii_case("tossinvest")
+    }) {
+        if let Some(observed) = timestamp(&point.observed_at) {
+            let age = Utc::now().signed_duration_since(observed).num_seconds();
+            if age <= 120 {
+                return Ok("LIVE".into());
+            }
+            if age <= 600 {
+                return Ok("DELAYED".into());
+            }
+            if selected.source.eq_ignore_ascii_case("tossinvest") {
+                let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+                let now_kst = Utc::now().with_timezone(&kst);
+                let observed_kst = observed.with_timezone(&kst);
+                let observed_after_close = observed_kst.hour() > 15
+                    || observed_kst.hour() == 15 && observed_kst.minute() >= 30;
+                if observed_kst.date_naive() == now_kst.date_naive() && observed_after_close {
+                    return Ok("SESSION CLOSE".into());
+                }
+                let days = (now_kst.date_naive() - observed_kst.date_naive()).num_days();
+                if (1..=7).contains(&days)
+                    && (matches!(now_kst.weekday(), Weekday::Sat | Weekday::Sun)
+                        || now_kst.hour() < 9)
+                {
+                    return Ok("LATEST CLOSE".into());
+                }
+            }
+            return Ok(if age < 86_400 {
                 format!("STALE {}m", age.max(0) / 60)
+            } else {
+                format!("STALE {}d", age.max(0) / 86_400)
             });
         }
     }
@@ -1648,7 +1717,8 @@ fn freshness(
     let Some(date) = date else {
         return Ok("UNKNOWN".into());
     };
-    let age = (Utc::now().date_naive() - date).num_days();
+    let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
+    let age = (Utc::now().with_timezone(&kst).date_naive() - date).num_days();
     if let Some(selected) = selected.filter(|value| value.source.eq_ignore_ascii_case("krx")) {
         if let Some(status) = db.series_status(selected.source, selected.series)? {
             let checked_recently = DateTime::parse_from_rfc3339(&status.checked_at)
@@ -1701,22 +1771,41 @@ fn read_indicator(
         .map(|(candidate, points)| (Some(candidate), points))
         .unwrap_or_default();
     let mut points = points;
-    if let Some(binance_ref) = definition
-        .candidates
-        .iter()
-        .find(|candidate| candidate.source == "binance")
-        .copied()
-    {
-        if let Some(live) = db.latest_live_quote("binance", binance_ref.series, "BTCUSDT")? {
-            selected_ref = Some(binance_ref);
-            if points
+    for candidate in definition.candidates.iter().copied() {
+        let Some(entity) = live_entity(candidate) else {
+            continue;
+        };
+        let Some(live) = db.latest_live_quote(candidate.source, candidate.series, entity)? else {
+            continue;
+        };
+        let same_market_date = points.last().is_some_and(|point| {
+            candidate.source == "tossinvest"
+                && point.observed_at.get(..10) == live.observed_at.get(..10)
+        });
+        let should_overlay = points.last().is_none_or(|point| {
+            if same_market_date {
+                match (source_timestamp(&live), source_timestamp(point)) {
+                    (Some(live_time), Some(point_time)) => live_time > point_time,
+                    _ => point_is_newer(&live, point),
+                }
+            } else {
+                point_is_newer(&live, point)
+            }
+        });
+        if !should_overlay {
+            continue;
+        }
+        selected_ref = Some(candidate);
+        if same_market_date
+            || points
                 .last()
-                .is_none_or(|point| point.observed_at < live.observed_at)
-            {
-                points.push(live);
-            } else if let Some(last) = points.last_mut() {
+                .is_some_and(|point| point.observed_at == live.observed_at)
+        {
+            if let Some(last) = points.last_mut() {
                 *last = live;
             }
+        } else {
+            points.push(live);
         }
     }
     let source = selected_ref.map(|candidate| candidate.source.to_uppercase());
@@ -1849,5 +1938,115 @@ mod tests {
             .unwrap();
         assert_eq!(usdkrw.value, Some(1_395.0));
         assert_eq!(usdkrw.source.as_deref(), Some("FRED"));
+    }
+
+    #[test]
+    fn toss_live_index_overlays_krx_eod_and_keeps_eod_comparison() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("dashboard-toss-live.db")).unwrap();
+        db.put(&NewObservation::simple(
+            "krx",
+            "KRX_KOSPI_CLOSE",
+            "2026-08-21",
+            2_800.0,
+        ))
+        .unwrap();
+        db.put_live_quote(&NewObservation {
+            source: "tossinvest".into(),
+            series: "KOSPI_INDEX".into(),
+            entity: "KOSPI".into(),
+            observed_at: "2026-08-24T10:00:00+09:00".into(),
+            value: 2_830.0,
+            released_at: None,
+            source_asof: Some("2026-08-24T10:00:00+09:00".into()),
+            revision_id: None,
+            metadata: serde_json::Value::Null,
+        })
+        .unwrap();
+        let dashboard = build_at(&db, None).unwrap();
+        let kospi = dashboard
+            .indicators
+            .iter()
+            .find(|indicator| indicator.key == "kospi")
+            .unwrap();
+        assert_eq!(kospi.value, Some(2_830.0));
+        assert_eq!(kospi.previous_value, Some(2_800.0));
+        assert_eq!(kospi.change, Some(30.0));
+        assert_eq!(kospi.source.as_deref(), Some("TOSSINVEST"));
+        assert_eq!(kospi.cadence, "INTRADAY");
+    }
+
+    #[test]
+    fn same_day_published_krx_close_beats_an_older_intraday_quote() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("dashboard-toss-close.db")).unwrap();
+        db.put(&NewObservation::simple(
+            "krx",
+            "KRX_KOSPI_CLOSE",
+            "2026-08-21",
+            2_800.0,
+        ))
+        .unwrap();
+        db.put(&NewObservation::simple(
+            "krx",
+            "KRX_KOSPI_CLOSE",
+            "2026-08-24",
+            2_825.0,
+        ))
+        .unwrap();
+        db.put_live_quote(&NewObservation {
+            source: "tossinvest".into(),
+            series: "KOSPI_INDEX".into(),
+            entity: "KOSPI".into(),
+            observed_at: "2026-08-24T10:00:00+09:00".into(),
+            value: 2_810.0,
+            released_at: None,
+            source_asof: Some("2026-08-24T10:00:00+09:00".into()),
+            revision_id: None,
+            metadata: serde_json::Value::Null,
+        })
+        .unwrap();
+        let dashboard = build_at(&db, None).unwrap();
+        let kospi = dashboard
+            .indicators
+            .iter()
+            .find(|indicator| indicator.key == "kospi")
+            .unwrap();
+        assert_eq!(kospi.value, Some(2_825.0));
+        assert_eq!(kospi.previous_value, Some(2_800.0));
+        assert_eq!(kospi.source.as_deref(), Some("KRX"));
+    }
+
+    #[test]
+    fn stale_live_quote_cannot_replace_newer_official_eod() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("dashboard-stale-live.db")).unwrap();
+        db.put(&NewObservation::simple(
+            "krx",
+            "KRX_KOSDAQ_CLOSE",
+            "2026-08-21",
+            900.0,
+        ))
+        .unwrap();
+        db.put_live_quote(&NewObservation {
+            source: "tossinvest".into(),
+            series: "KOSDAQ_INDEX".into(),
+            entity: "KOSDAQ".into(),
+            observed_at: "2026-08-20T15:30:00+09:00".into(),
+            value: 880.0,
+            released_at: None,
+            source_asof: Some("2026-08-20T15:30:00+09:00".into()),
+            revision_id: None,
+            metadata: serde_json::Value::Null,
+        })
+        .unwrap();
+        let dashboard = build_at(&db, None).unwrap();
+        let kosdaq = dashboard
+            .indicators
+            .iter()
+            .find(|indicator| indicator.key == "kosdaq")
+            .unwrap();
+        assert_eq!(kosdaq.value, Some(900.0));
+        assert_eq!(kosdaq.source.as_deref(), Some("KRX"));
     }
 }

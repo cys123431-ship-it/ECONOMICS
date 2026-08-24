@@ -949,10 +949,16 @@ function indicatorTable(keys, indicators) {
     sparkCell.append(sparkline(indicator.history, 'mini-spark'));
     row.append(sparkCell);
     const sourceCell = el('td', 'indicator-source');
+    const freshness = String(indicator.freshness || 'UNKNOWN');
+    const freshnessClass = freshness.startsWith('STALE') || freshness === 'NO DATA'
+      ? 'stale'
+      : ['DELAYED', 'SESSION CLOSE', 'LATEST CLOSE'].includes(freshness)
+        ? 'delayed'
+        : '';
     sourceCell.append(
       el('span', '', indicator.observed_at ? String(indicator.observed_at).slice(0, 16) : '—'),
       el('small', '', indicator.source_series || 'NO SOURCE'),
-      el('small', `freshness ${String(indicator.freshness || '').startsWith('STALE') ? 'stale' : ''}`, `${indicator.cadence || 'UNKNOWN'} · ${indicator.freshness || 'UNKNOWN'}`)
+      el('small', `freshness ${freshnessClass}`, `${indicator.cadence || 'UNKNOWN'} · ${freshness}`)
     );
     row.append(sourceCell);
     body.append(row);

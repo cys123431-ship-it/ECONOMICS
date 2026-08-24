@@ -1,4 +1,4 @@
-use crate::{collectors, config::Config, db::Db, engine, live_market};
+use crate::{collectors, config::Config, db::Db, engine, live_market, toss_market};
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use serde::Serialize;
 use std::{
@@ -245,6 +245,16 @@ fn collect_and_calculate(
         collectors::collect_binance_live(config, &db),
     );
     update_progress(status, "binance-live", &report);
+
+    if config.has_tossinvest_credentials() {
+        update_progress(status, "toss-korea-indices", &report);
+        merge_result(
+            &mut report,
+            "toss market indicators",
+            toss_market::collect_indices(config, &db),
+        );
+        update_progress(status, "toss-korea-indices", &report);
+    }
 
     if market_due || matches!(mode, RefreshMode::Full) {
         if config.krx_api_key.is_some() {
