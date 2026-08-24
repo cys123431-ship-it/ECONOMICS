@@ -7,8 +7,6 @@ pub struct Config {
     pub fred_api_key: Option<String>,
     pub ecos_api_key: Option<String>,
     pub krx_api_key: Option<String>,
-    pub tossinvest_client_id: Option<String>,
-    pub tossinvest_client_secret: Option<String>,
     pub official_adapters_file: Option<PathBuf>,
     pub db_path: PathBuf,
     pub rulebook_path: PathBuf,
@@ -105,8 +103,6 @@ impl Config {
             fred_api_key: value("FRED_API_KEY", &file),
             ecos_api_key: value("ECOS_API_KEY", &file),
             krx_api_key: value("KRX_API_KEY", &file),
-            tossinvest_client_id: value("TOSSINVEST_CLIENT_ID", &file),
-            tossinvest_client_secret: value("TOSSINVEST_CLIENT_SECRET", &file),
             official_adapters_file: value("OFFICIAL_ADAPTERS_FILE", &file).map(PathBuf::from),
             db_path: PathBuf::from(
                 value("ECONOMICS_DB", &file).unwrap_or_else(|| "runtime/economics.db".into()),
@@ -144,20 +140,11 @@ impl Config {
         numeric_setting("ECONOMICS_MACRO_REFRESH_MINUTES", 30, 5, 360)
     }
 
-    pub fn has_tossinvest_credentials(&self) -> bool {
-        self.tossinvest_client_id.is_some() && self.tossinvest_client_secret.is_some()
-    }
-
     pub fn print_key_status(&self) {
         for (name, present) in [
             ("FRED_API_KEY", self.fred_api_key.is_some()),
             ("ECOS_API_KEY", self.ecos_api_key.is_some()),
             ("KRX_API_KEY", self.krx_api_key.is_some()),
-            ("TOSSINVEST_CLIENT_ID", self.tossinvest_client_id.is_some()),
-            (
-                "TOSSINVEST_CLIENT_SECRET",
-                self.tossinvest_client_secret.is_some(),
-            ),
         ] {
             println!("{name}: {}", if present { "configured" } else { "missing" });
         }

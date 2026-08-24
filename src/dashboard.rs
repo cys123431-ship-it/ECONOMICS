@@ -1,5 +1,5 @@
 use crate::db::{Db, Point};
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
+use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::Serialize;
 
 #[derive(Clone, Copy)]
@@ -81,20 +81,10 @@ const FRED_CURVE: &[SeriesRef] = &[series("fred", "T10Y2Y")];
 const FRED_HY: &[SeriesRef] = &[series("fred", "BAMLH0A0HYM2")];
 const FRED_USD: &[SeriesRef] = &[series("fred", "DTWEXBGS")];
 const TREASURY_BTC: &[SeriesRef] = &[series("treasury", "AUCTION_BTC")];
-const USD_KRW: &[SeriesRef] = &[
-    series("tossinvest", "USD_KRW_MID"),
-    series("ecos", "KR_USD_KRW"),
-    series("fred", "DEXKOUS"),
-];
+const USD_KRW: &[SeriesRef] = &[series("ecos", "KR_USD_KRW"), series("fred", "DEXKOUS")];
 const KR_BASE_RATE: &[SeriesRef] = &[series("ecos", "KR_BASE_RATE")];
-const KOSPI: &[SeriesRef] = &[
-    series("tossinvest", "KOSPI_INDEX"),
-    series("krx", "KRX_KOSPI_CLOSE"),
-];
-const KOSDAQ: &[SeriesRef] = &[
-    series("tossinvest", "KOSDAQ_INDEX"),
-    series("krx", "KRX_KOSDAQ_CLOSE"),
-];
+const KOSPI: &[SeriesRef] = &[series("krx", "KRX_KOSPI_CLOSE")];
+const KOSDAQ: &[SeriesRef] = &[series("krx", "KRX_KOSDAQ_CLOSE")];
 const KOSPI_BREADTH: &[SeriesRef] = &[series("krx", "KRX_KOSPI_BREADTH")];
 const KOSDAQ_BREADTH: &[SeriesRef] = &[series("krx", "KRX_KOSDAQ_BREADTH")];
 const KRX_BREADTH: &[SeriesRef] = &[series("krx", "KRX_BREADTH")];
@@ -203,35 +193,6 @@ const BTC_SPOT_CHANGE: &[SeriesRef] = &[series("binance", "BTC_SPOT_CHANGE_24H")
 const BTC_MARK_PRICE: &[SeriesRef] = &[series("binance", "BTC_MARK_PRICE_USD")];
 const BTC_INDEX_PRICE: &[SeriesRef] = &[series("binance", "BTC_INDEX_PRICE_USD")];
 const BTC_CURRENT_FUNDING: &[SeriesRef] = &[series("binance", "BTC_CURRENT_FUNDING_RATE")];
-
-const TOSS_USD_KRW_BUY: &[SeriesRef] = &[series("tossinvest", "USD_KRW_BUY")];
-const TOSS_USD_KRW_BASIS: &[SeriesRef] = &[series("tossinvest", "USD_KRW_BASIS_BP")];
-const KR_BOND_2Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_2Y_YIELD")];
-const KR_BOND_3Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_3Y_YIELD")];
-const KR_BOND_5Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_5Y_YIELD")];
-const KR_BOND_10Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_10Y_YIELD")];
-const KR_BOND_20Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_20Y_YIELD")];
-const KR_BOND_30Y: &[SeriesRef] = &[series("tossinvest", "KR_BOND_30Y_YIELD")];
-const KOSPI_INDIVIDUAL_FLOW: &[SeriesRef] = &[series("tossinvest", "KOSPI_INDIVIDUAL_NET_BUY_KRW")];
-const KOSPI_FOREIGNER_FLOW: &[SeriesRef] = &[series("tossinvest", "KOSPI_FOREIGNER_NET_BUY_KRW")];
-const KOSPI_INSTITUTION_FLOW: &[SeriesRef] =
-    &[series("tossinvest", "KOSPI_INSTITUTION_NET_BUY_KRW")];
-const KOSPI_PENSION_FLOW: &[SeriesRef] = &[series("tossinvest", "KOSPI_PENSION_FUND_NET_BUY_KRW")];
-const KOSDAQ_INDIVIDUAL_FLOW: &[SeriesRef] =
-    &[series("tossinvest", "KOSDAQ_INDIVIDUAL_NET_BUY_KRW")];
-const KOSDAQ_FOREIGNER_FLOW: &[SeriesRef] = &[series("tossinvest", "KOSDAQ_FOREIGNER_NET_BUY_KRW")];
-const KOSDAQ_INSTITUTION_FLOW: &[SeriesRef] =
-    &[series("tossinvest", "KOSDAQ_INSTITUTION_NET_BUY_KRW")];
-const KOSDAQ_PENSION_FLOW: &[SeriesRef] =
-    &[series("tossinvest", "KOSDAQ_PENSION_FUND_NET_BUY_KRW")];
-const KOSPI_DAY_OPEN: &[SeriesRef] = &[series("tossinvest", "KOSPI_DAY_OPEN")];
-const KOSPI_DAY_HIGH: &[SeriesRef] = &[series("tossinvest", "KOSPI_DAY_HIGH")];
-const KOSPI_DAY_LOW: &[SeriesRef] = &[series("tossinvest", "KOSPI_DAY_LOW")];
-const KOSPI_DAY_VOLUME: &[SeriesRef] = &[series("tossinvest", "KOSPI_DAY_VOLUME")];
-const KOSDAQ_DAY_OPEN: &[SeriesRef] = &[series("tossinvest", "KOSDAQ_DAY_OPEN")];
-const KOSDAQ_DAY_HIGH: &[SeriesRef] = &[series("tossinvest", "KOSDAQ_DAY_HIGH")];
-const KOSDAQ_DAY_LOW: &[SeriesRef] = &[series("tossinvest", "KOSDAQ_DAY_LOW")];
-const KOSDAQ_DAY_VOLUME: &[SeriesRef] = &[series("tossinvest", "KOSDAQ_DAY_VOLUME")];
 
 const INDICATORS: &[IndicatorDefinition] = &[
     indicator(
@@ -1581,294 +1542,6 @@ const INDICATORS: &[IndicatorDefinition] = &[
         2,
         "LIVE",
     ),
-    indicator(
-        "usdkrw_buy",
-        "토스증권 USD/KRW 참고 매수환율",
-        "USD/KRW BUY",
-        "korea",
-        "fx",
-        TOSS_USD_KRW_BUY,
-        "krw",
-        2,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "usdkrw_basis_bp",
-        "토스증권 매수환율-매매기준율 스프레드",
-        "FX SPREAD",
-        "korea",
-        "fx",
-        TOSS_USD_KRW_BASIS,
-        "basis_points",
-        1,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_2y",
-        "한국 국채 2년 수익률",
-        "KR2Y",
-        "korea",
-        "bonds",
-        KR_BOND_2Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_3y",
-        "한국 국채 3년 수익률",
-        "KR3Y",
-        "korea",
-        "bonds",
-        KR_BOND_3Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_5y",
-        "한국 국채 5년 수익률",
-        "KR5Y",
-        "korea",
-        "bonds",
-        KR_BOND_5Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_10y",
-        "한국 국채 10년 수익률",
-        "KR10Y",
-        "korea",
-        "bonds",
-        KR_BOND_10Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_20y",
-        "한국 국채 20년 수익률",
-        "KR20Y",
-        "korea",
-        "bonds",
-        KR_BOND_20Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kr_bond_30y",
-        "한국 국채 30년 수익률",
-        "KR30Y",
-        "korea",
-        "bonds",
-        KR_BOND_30Y,
-        "percent",
-        3,
-        2,
-        "LIVE",
-    ),
-    indicator(
-        "kospi_individual_flow",
-        "코스피 개인 순매수대금",
-        "KOSPI 개인",
-        "korea",
-        "flows",
-        KOSPI_INDIVIDUAL_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_foreigner_flow",
-        "코스피 외국인 전체 순매수대금",
-        "KOSPI 외국인",
-        "korea",
-        "flows",
-        KOSPI_FOREIGNER_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_institution_flow",
-        "코스피 기관 합계 순매수대금",
-        "KOSPI 기관",
-        "korea",
-        "flows",
-        KOSPI_INSTITUTION_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_pension_flow",
-        "코스피 연기금 순매수대금",
-        "KOSPI 연기금",
-        "korea",
-        "flows",
-        KOSPI_PENSION_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_individual_flow",
-        "코스닥 개인 순매수대금",
-        "KOSDAQ 개인",
-        "korea",
-        "flows",
-        KOSDAQ_INDIVIDUAL_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_foreigner_flow",
-        "코스닥 외국인 전체 순매수대금",
-        "KOSDAQ 외국인",
-        "korea",
-        "flows",
-        KOSDAQ_FOREIGNER_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_institution_flow",
-        "코스닥 기관 합계 순매수대금",
-        "KOSDAQ 기관",
-        "korea",
-        "flows",
-        KOSDAQ_INSTITUTION_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_pension_flow",
-        "코스닥 연기금 순매수대금",
-        "KOSDAQ 연기금",
-        "korea",
-        "flows",
-        KOSDAQ_PENSION_FLOW,
-        "krw_amount",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_day_open",
-        "코스피 당일 시가",
-        "KOSPI OPEN",
-        "korea",
-        "stocks",
-        KOSPI_DAY_OPEN,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_day_high",
-        "코스피 당일 고가",
-        "KOSPI HIGH",
-        "korea",
-        "stocks",
-        KOSPI_DAY_HIGH,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_day_low",
-        "코스피 당일 저가",
-        "KOSPI LOW",
-        "korea",
-        "stocks",
-        KOSPI_DAY_LOW,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kospi_day_volume",
-        "코스피 당일 거래량",
-        "KOSPI VOL",
-        "korea",
-        "stocks",
-        KOSPI_DAY_VOLUME,
-        "count",
-        0,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_day_open",
-        "코스닥 당일 시가",
-        "KOSDAQ OPEN",
-        "korea",
-        "stocks",
-        KOSDAQ_DAY_OPEN,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_day_high",
-        "코스닥 당일 고가",
-        "KOSDAQ HIGH",
-        "korea",
-        "stocks",
-        KOSDAQ_DAY_HIGH,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_day_low",
-        "코스닥 당일 저가",
-        "KOSDAQ LOW",
-        "korea",
-        "stocks",
-        KOSDAQ_DAY_LOW,
-        "index",
-        2,
-        2,
-        "1D",
-    ),
-    indicator(
-        "kosdaq_day_volume",
-        "코스닥 당일 거래량",
-        "KOSDAQ VOL",
-        "korea",
-        "stocks",
-        KOSDAQ_DAY_VOLUME,
-        "count",
-        0,
-        2,
-        "1D",
-    ),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -1936,27 +1609,9 @@ fn point_is_newer(candidate: &Point, selected: &Point) -> bool {
     }
 }
 
-fn source_timestamp(point: &Point) -> Option<DateTime<Utc>> {
-    point
-        .source_asof
-        .as_deref()
-        .and_then(timestamp)
-        .or_else(|| point.released_at.as_deref().and_then(timestamp))
-        .or_else(|| timestamp(&point.ingested_at))
-}
-
 fn live_entity(candidate: SeriesRef) -> Option<&'static str> {
     match (candidate.source, candidate.series) {
         ("binance", _) => Some("BTCUSDT"),
-        ("tossinvest", "KOSPI_INDEX") => Some("KOSPI"),
-        ("tossinvest", "KOSDAQ_INDEX") => Some("KOSDAQ"),
-        ("tossinvest", "USD_KRW_MID" | "USD_KRW_BUY" | "USD_KRW_BASIS_BP") => Some("USD/KRW"),
-        ("tossinvest", "KR_BOND_2Y_YIELD") => Some("KR_BOND_2Y"),
-        ("tossinvest", "KR_BOND_3Y_YIELD") => Some("KR_BOND_3Y"),
-        ("tossinvest", "KR_BOND_5Y_YIELD") => Some("KR_BOND_5Y"),
-        ("tossinvest", "KR_BOND_10Y_YIELD") => Some("KR_BOND_10Y"),
-        ("tossinvest", "KR_BOND_20Y_YIELD") => Some("KR_BOND_20Y"),
-        ("tossinvest", "KR_BOND_30Y_YIELD") => Some("KR_BOND_30Y"),
         _ => None,
     }
 }
@@ -1965,14 +1620,7 @@ fn cadence(selected: Option<SeriesRef>) -> &'static str {
     let Some(selected) = selected else {
         return "UNKNOWN";
     };
-    if selected.source == "tossinvest"
-        && (selected.series.contains("_DAY_")
-            || selected.series.contains("_NET_BUY_")
-            || selected.series.starts_with("KR_BOND_"))
-    {
-        return "DAILY";
-    }
-    if selected.source == "binance" || selected.source == "tossinvest" {
+    if selected.source == "binance" {
         return "INTRADAY";
     }
     if selected.source == "krx" || selected.source == "ecos" && selected.series == "KR_USD_KRW" {
@@ -2009,11 +1657,7 @@ fn freshness(
     let Some(point) = point else {
         return Ok("NO DATA".into());
     };
-    if let Some(selected) = selected.filter(|value| {
-        value.source.eq_ignore_ascii_case("binance")
-            || value.source.eq_ignore_ascii_case("tossinvest")
-                && cadence(Some(*value)) == "INTRADAY"
-    }) {
+    if selected.is_some_and(|value| value.source.eq_ignore_ascii_case("binance")) {
         if let Some(observed) = timestamp(&point.observed_at) {
             let age = Utc::now().signed_duration_since(observed).num_seconds();
             if age <= 120 {
@@ -2021,23 +1665,6 @@ fn freshness(
             }
             if age <= 600 {
                 return Ok("DELAYED".into());
-            }
-            if selected.source.eq_ignore_ascii_case("tossinvest") {
-                let kst = FixedOffset::east_opt(9 * 60 * 60).expect("KST offset is valid");
-                let now_kst = Utc::now().with_timezone(&kst);
-                let observed_kst = observed.with_timezone(&kst);
-                let observed_after_close = observed_kst.hour() > 15
-                    || observed_kst.hour() == 15 && observed_kst.minute() >= 30;
-                if observed_kst.date_naive() == now_kst.date_naive() && observed_after_close {
-                    return Ok("SESSION CLOSE".into());
-                }
-                let days = (now_kst.date_naive() - observed_kst.date_naive()).num_days();
-                if (1..=7).contains(&days)
-                    && (matches!(now_kst.weekday(), Weekday::Sat | Weekday::Sun)
-                        || now_kst.hour() < 9)
-                {
-                    return Ok("LATEST CLOSE".into());
-                }
             }
             return Ok(if age < 86_400 {
                 format!("STALE {}m", age.max(0) / 60)
@@ -2114,28 +1741,16 @@ fn read_indicator(
         let Some(live) = db.latest_live_quote(candidate.source, candidate.series, entity)? else {
             continue;
         };
-        let same_market_date = points.last().is_some_and(|point| {
-            candidate.source == "tossinvest"
-                && point.observed_at.get(..10) == live.observed_at.get(..10)
-        });
-        let should_overlay = points.last().is_none_or(|point| {
-            if same_market_date {
-                match (source_timestamp(&live), source_timestamp(point)) {
-                    (Some(live_time), Some(point_time)) => live_time > point_time,
-                    _ => point_is_newer(&live, point),
-                }
-            } else {
-                point_is_newer(&live, point)
-            }
-        });
-        if !should_overlay {
+        if points
+            .last()
+            .is_some_and(|point| !point_is_newer(&live, point))
+        {
             continue;
         }
         selected_ref = Some(candidate);
-        if same_market_date
-            || points
-                .last()
-                .is_some_and(|point| point.observed_at == live.observed_at)
+        if points
+            .last()
+            .is_some_and(|point| point.observed_at == live.observed_at)
         {
             if let Some(last) = points.last_mut() {
                 *last = live;
@@ -2277,9 +1892,9 @@ mod tests {
     }
 
     #[test]
-    fn toss_live_index_overlays_krx_eod_and_keeps_eod_comparison() {
+    fn retired_broker_quotes_cannot_override_official_krx_indices() {
         let temporary = tempfile::tempdir().unwrap();
-        let db = Db::open(&temporary.path().join("dashboard-toss-live.db")).unwrap();
+        let db = Db::open(&temporary.path().join("dashboard-official-only.db")).unwrap();
         db.put(&NewObservation::simple(
             "krx",
             "KRX_KOSPI_CLOSE",
@@ -2288,11 +1903,11 @@ mod tests {
         ))
         .unwrap();
         db.put_live_quote(&NewObservation {
-            source: "tossinvest".into(),
+            source: "retired_broker".into(),
             series: "KOSPI_INDEX".into(),
             entity: "KOSPI".into(),
             observed_at: "2026-08-24T10:00:00+09:00".into(),
-            value: 2_830.0,
+            value: 2_900.0,
             released_at: None,
             source_asof: Some("2026-08-24T10:00:00+09:00".into()),
             revision_id: None,
@@ -2305,131 +1920,8 @@ mod tests {
             .iter()
             .find(|indicator| indicator.key == "kospi")
             .unwrap();
-        assert_eq!(kospi.value, Some(2_830.0));
-        assert_eq!(kospi.previous_value, Some(2_800.0));
-        assert_eq!(kospi.change, Some(30.0));
-        assert_eq!(kospi.source.as_deref(), Some("TOSSINVEST"));
-        assert_eq!(kospi.cadence, "INTRADAY");
-    }
-
-    #[test]
-    fn same_day_published_krx_close_beats_an_older_intraday_quote() {
-        let temporary = tempfile::tempdir().unwrap();
-        let db = Db::open(&temporary.path().join("dashboard-toss-close.db")).unwrap();
-        db.put(&NewObservation::simple(
-            "krx",
-            "KRX_KOSPI_CLOSE",
-            "2026-08-21",
-            2_800.0,
-        ))
-        .unwrap();
-        db.put(&NewObservation::simple(
-            "krx",
-            "KRX_KOSPI_CLOSE",
-            "2026-08-24",
-            2_825.0,
-        ))
-        .unwrap();
-        db.put_live_quote(&NewObservation {
-            source: "tossinvest".into(),
-            series: "KOSPI_INDEX".into(),
-            entity: "KOSPI".into(),
-            observed_at: "2026-08-24T10:00:00+09:00".into(),
-            value: 2_810.0,
-            released_at: None,
-            source_asof: Some("2026-08-24T10:00:00+09:00".into()),
-            revision_id: None,
-            metadata: serde_json::Value::Null,
-        })
-        .unwrap();
-        let dashboard = build_at(&db, None).unwrap();
-        let kospi = dashboard
-            .indicators
-            .iter()
-            .find(|indicator| indicator.key == "kospi")
-            .unwrap();
-        assert_eq!(kospi.value, Some(2_825.0));
-        assert_eq!(kospi.previous_value, Some(2_800.0));
+        assert_eq!(kospi.value, Some(2_800.0));
         assert_eq!(kospi.source.as_deref(), Some("KRX"));
-    }
-
-    #[test]
-    fn stale_live_quote_cannot_replace_newer_official_eod() {
-        let temporary = tempfile::tempdir().unwrap();
-        let db = Db::open(&temporary.path().join("dashboard-stale-live.db")).unwrap();
-        db.put(&NewObservation::simple(
-            "krx",
-            "KRX_KOSDAQ_CLOSE",
-            "2026-08-21",
-            900.0,
-        ))
-        .unwrap();
-        db.put_live_quote(&NewObservation {
-            source: "tossinvest".into(),
-            series: "KOSDAQ_INDEX".into(),
-            entity: "KOSDAQ".into(),
-            observed_at: "2026-08-20T15:30:00+09:00".into(),
-            value: 880.0,
-            released_at: None,
-            source_asof: Some("2026-08-20T15:30:00+09:00".into()),
-            revision_id: None,
-            metadata: serde_json::Value::Null,
-        })
-        .unwrap();
-        let dashboard = build_at(&db, None).unwrap();
-        let kosdaq = dashboard
-            .indicators
-            .iter()
-            .find(|indicator| indicator.key == "kosdaq")
-            .unwrap();
-        assert_eq!(kosdaq.value, Some(900.0));
-        assert_eq!(kosdaq.source.as_deref(), Some("KRX"));
-    }
-
-    #[test]
-    fn toss_bond_and_fx_live_quotes_are_exposed_with_exact_units() {
-        let temporary = tempfile::tempdir().unwrap();
-        let db = Db::open(&temporary.path().join("dashboard-toss-expanded.db")).unwrap();
-        for (series, entity, value) in [
-            ("KR_BOND_10Y_YIELD", "KR_BOND_10Y", 3.251),
-            ("USD_KRW_MID", "USD/KRW", 1_375.4),
-            ("USD_KRW_BASIS_BP", "USD/KRW", 40.0),
-        ] {
-            db.put_live_quote(&NewObservation {
-                source: "tossinvest".into(),
-                series: series.into(),
-                entity: entity.into(),
-                observed_at: Utc::now().to_rfc3339(),
-                value,
-                released_at: None,
-                source_asof: Some(Utc::now().to_rfc3339()),
-                revision_id: None,
-                metadata: serde_json::Value::Null,
-            })
-            .unwrap();
-        }
-        let dashboard = build_at(&db, None).unwrap();
-        let bond = dashboard
-            .indicators
-            .iter()
-            .find(|indicator| indicator.key == "kr_bond_10y")
-            .unwrap();
-        let fx = dashboard
-            .indicators
-            .iter()
-            .find(|indicator| indicator.key == "usdkrw")
-            .unwrap();
-        let spread = dashboard
-            .indicators
-            .iter()
-            .find(|indicator| indicator.key == "usdkrw_basis_bp")
-            .unwrap();
-        assert_eq!(bond.value, Some(3.251));
-        assert_eq!(bond.unit, "percent");
-        assert_eq!(bond.cadence, "DAILY");
-        assert_eq!(fx.value, Some(1_375.4));
-        assert_eq!(fx.source.as_deref(), Some("TOSSINVEST"));
-        assert_eq!(fx.cadence, "INTRADAY");
-        assert_eq!(spread.unit, "basis_points");
+        assert_eq!(kospi.source_series.as_deref(), Some("krx:KRX_KOSPI_CLOSE"));
     }
 }

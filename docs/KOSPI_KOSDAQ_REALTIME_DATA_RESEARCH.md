@@ -1,30 +1,32 @@
-# KOSPI·KOSDAQ 장중 지수 수신 검토
+# KOSPI·KOSDAQ 장중 참고 시세 검토
 
 검토일: 2026-08-24
 대상: ECONOMICS Radar 개인용 로컬 대시보드
 
 ## 결론
 
-이 앱은 토스증권 Open API를 KOSPI·KOSDAQ 장중 현재지수의 1순위 소스로 사용하고, 기존 KRX OPEN API 일별값을 자동 대체값으로 유지합니다.
+앱의 공식 원본값과 위기 계산은 기존처럼 KRX Open API의 KOSPI·KOSDAQ 일별시세정보를 사용한다. 장중 가격을 빠르게 확인하는 용도로만 한국 탭에 TradingView Single Ticker 위젯 두 개를 별도로 표시한다.
 
-토스증권 공식 API는 `KOSPI,KOSDAQ`을 한 요청으로 조회하며 원본 `lastPrice`와 nullable 데이터 `timestamp`를 반환합니다. 운영 응답에서 `timestamp`가 null이면 같은 값의 최신 공식 1분봉 시각만 보완 근거로 사용하며, 값이 다르면 시각을 추정하지 않습니다. 시장 지표 조회는 계좌번호 없이 OAuth 토큰만 필요합니다. 토스 계좌 보유자는 WTS의 Open API 설정에서 클라이언트 키를 발급하고 이 노트북의 공인 IP를 허용 목록에 등록할 수 있습니다. 자세한 명세는 [토스증권 공식 Open API 안내](https://p.tossinvest.com/ko/open-api), [공식 OpenAPI 원문](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json), [공식 연동 안내](https://openapi.tossinvest.com/openapi-docs/overview.md)를 기준으로 했습니다.
+- 코스피 위젯 심볼: `KRX:KOSPI`
+- 코스닥 위젯 심볼: `KRX:KOSDAQ`
+- 위젯 값은 SQLite에 저장하지 않고 규칙 엔진·위기 점수·백테스트에 전달하지 않는다.
+- 카드나 링크를 누르면 TradingView의 해당 지수 전체 페이지를 새 탭으로 연다.
+- 증권사 OAuth, API 키, 허용 IP, 고정 공인 IP는 필요하지 않다.
 
-## 왜 기존 KRX 키만으로는 안 되는가
+TradingView 공식 문서는 Single Ticker를 한 심볼의 가격과 등락률을 보여 주는 위젯으로 정의하며, 위젯 자체 데이터가 포함되어 별도 API 연결이 필요하지 않다고 설명한다. [Single Ticker 문서](https://www.tradingview.com/widget-docs/widgets/tickers/single-ticker/), [위젯 시작 안내](https://www.tradingview.com/widget-docs/getting-started/)
 
-현재 KRX OPEN API 서비스 목록은 KOSPI·KOSDAQ 지수를 **일별시세정보**로 명시합니다. KRX의 직접 실시간 피드는 별도 데이터 분배 상품이며, 전문 이용은 KRX 승인과 코스콤 계약 절차가 필요합니다. 따라서 기존 KRX 키는 이력과 공식 EOD 확인에 계속 사용하되 장중 실시간값으로 표시하지 않습니다. [KRX OPEN API 서비스 목록](https://openapi.krx.co.kr/contents/OPP/INFO/service/OPPINFO004.cmd), [KRX 데이터 수신방법](https://openapi.krx.co.kr/contents/OPP/DATA/OPPDATA003.jsp)
+## KRX와 TradingView의 역할 분리
 
-## 앱의 데이터 선택 규칙
+KRX Open API의 KOSPI·KOSDAQ 서비스는 일별시세정보다. 앱은 한국시간 오늘부터 역순으로 최신 공개 행을 확인하고 `LATEST VERIFIED`, `PUBLISHED EOD`, `STALE` 상태와 기준일을 명시한다. 이 값이 앱의 공식 데이터 계보와 위기 계산에 사용된다. [KRX Open API 서비스 목록](https://openapi.krx.co.kr/contents/OPP/INFO/service/OPPINFO004.cmd)
 
-1. 토스 키 두 개가 설정되면 30초 주기로 KOSPI·KOSDAQ 현재지수를 함께 조회합니다.
-2. 토스의 원본 데이터 시각이 KRX EOD보다 실제로 최신일 때만 화면을 덮어씁니다.
-3. 같은 날짜의 토스 장중값과 KRX EOD는 두 개의 일간 관측치로 중복 계산하지 않습니다.
-4. 장중 수신이 멈추면 `DELAYED` 또는 `STALE`, 장 마감값이면 `SESSION CLOSE`, 다음 장 시작 전 최근 종가면 `LATEST CLOSE`로 표시합니다.
-5. 토스 키 미설정·허용 IP 오류·일시 장애 때는 최신 검증 KRX EOD를 유지하며 값을 추정하지 않습니다.
+TradingView 위젯은 브라우저가 TradingView 서버에 직접 연결해 `KRX:KOSPI`, `KRX:KOSDAQ`을 표시한다. 거래소 및 제공자 정책에 따라 지연될 수 있으므로 화면에 “외부 장중 참고 시세”와 “위기 점수 미사용”을 함께 표기한다. [KOSPI 심볼](https://www.tradingview.com/symbols/KRX-KOSPI/), [KOSDAQ 심볼](https://www.tradingview.com/symbols/KRX-KOSDAQ/)
 
-## 다른 공식 대안
+## 보안과 장애 경계
 
-한국투자증권도 공식 `국내업종 현재지수` API에서 KOSPI `0001`, KOSDAQ `1001`을 제공합니다. 다만 이 사용자는 이미 토스증권 계좌를 보유하고 있고 토스가 지수 전용 심볼과 원본 타임스탬프를 직접 제공하므로 토스를 우선 선택했습니다. [한국투자증권 공식 예제](https://github.com/koreainvestment/open-trading-api/blob/main/examples_llm/domestic_stock/inquire_index_price/inquire_index_price.py)
+Content Security Policy는 앱 자체 리소스 외에 TradingView 위젯 모듈, 이미지·글꼴, HTTPS·WebSocket 시세 연결, 위젯 데이터 프레임만 허용한다. 위젯이 Shadow DOM에 자체 스타일을 적용하므로 `style-src`의 인라인 스타일도 허용하지만 외부 스크립트와 프레임은 TradingView 위젯 호스트로 제한한다. TradingView 스크립트가 차단되거나 인터넷이 끊기면 카드 안의 직접 링크가 남으며, KRX·FRED·ECOS 수집과 위기 계산은 영향을 받지 않는다.
+
+TradingView는 위젯이 쿠키를 설정하지 않지만 정상 동작을 위해 임베드 페이지 URL, 위젯 유형, 표시 심볼, IP 주소를 처리한다고 안내한다. [TradingView 위젯 일반 FAQ](https://www.tradingview.com/widget-docs/faq/general/)
 
 ## 사용 범위
 
-이 구현은 개인 로컬 화면의 참고용입니다. 외부 재배포나 상업적 시세 제공은 별도 데이터 이용 권한을 확인해야 합니다.
+외부 위젯은 개인 로컬 화면의 참고용이다. 외부 재배포나 상업적 시세 제공은 각 데이터 제공자의 이용 조건과 거래소 권한을 별도로 확인해야 한다.

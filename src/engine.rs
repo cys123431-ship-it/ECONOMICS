@@ -1680,8 +1680,6 @@ mod tests {
             fred_api_key: None,
             ecos_api_key: None,
             krx_api_key: None,
-            tossinvest_client_id: None,
-            tossinvest_client_secret: None,
             official_adapters_file: None,
             db_path: temporary.path().join("empty.db"),
             rulebook_path: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
