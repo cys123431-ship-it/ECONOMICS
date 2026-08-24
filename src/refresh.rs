@@ -247,16 +247,27 @@ fn collect_and_calculate(
     update_progress(status, "binance-live", &report);
 
     if config.has_tossinvest_credentials() {
-        update_progress(status, "toss-korea-indices", &report);
+        update_progress(status, "toss-live-markets", &report);
         merge_result(
             &mut report,
-            "toss market indicators",
-            toss_market::collect_indices(config, &db),
+            "toss live markets",
+            toss_market::collect_realtime(config, &db),
         );
-        update_progress(status, "toss-korea-indices", &report);
+        update_progress(status, "toss-live-markets", &report);
     }
 
     if market_due || matches!(mode, RefreshMode::Full) {
+        if config.has_tossinvest_credentials() {
+            let before = report.stored;
+            update_progress(status, "toss-market-details", &report);
+            merge_result(
+                &mut report,
+                "toss market details",
+                toss_market::collect_market_details(config, &db),
+            );
+            observations_changed |= report.stored > before;
+            update_progress(status, "toss-market-details", &report);
+        }
         if config.krx_api_key.is_some() {
             let before = report.stored;
             update_progress(status, "krx-latest", &report);

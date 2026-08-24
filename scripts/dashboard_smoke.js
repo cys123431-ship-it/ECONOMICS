@@ -50,6 +50,7 @@ const ids = Object.fromEntries([
   'overviewQuotes',
   'overviewRecovery',
   'overviewMarketMatrix',
+  'overviewTossPulse',
   'riskHeatmap',
   'proprietarySignals',
   'sourceHealth',
@@ -211,6 +212,26 @@ for (const [risk, expected] of [[75, 0], [55, 50], [35, 100], [90, 0], [20, 100]
 }
 if (context.recoveryModel('us', { snapshot: { markets: {}, nodes: {} } }).progress !== null) {
   throw new Error('insufficient recovery coverage must stay null');
+}
+
+const now = Date.now();
+const liveSession = context.marketSessionModel({
+  data: {
+    today: {
+      date: new Date(now).toISOString().slice(0, 10),
+      integrated: {
+        regularMarket: {
+          startTime: new Date(now - 60 * 60 * 1000).toISOString(),
+          endTime: new Date(now + 60 * 60 * 1000).toISOString()
+        }
+      }
+    },
+    previousBusinessDay: { date: '2026-08-21', integrated: null },
+    nextBusinessDay: { date: '2026-08-25', integrated: null }
+  }
+}, 'KR');
+if (!liveSession.state.includes('OPEN')) {
+  throw new Error(`active market session was not detected: ${liveSession.state}`);
 }
 
 console.log('dashboard smoke test passed');

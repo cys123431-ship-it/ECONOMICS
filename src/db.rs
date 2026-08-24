@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension, Result};
+use rusqlite::{params, types::Type, Connection, OptionalExtension, Result};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -70,6 +70,14 @@ pub struct SeriesStatus {
     pub checked_at: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MarketPayload {
+    pub key: String,
+    pub observed_at: String,
+    pub ingested_at: String,
+    pub payload: serde_json::Value,
+}
+
 pub struct Db {
     conn: Connection,
 }
@@ -133,6 +141,13 @@ impl Db {
               latest_observed_at TEXT NOT NULL,
               checked_at TEXT NOT NULL,
               PRIMARY KEY(source,series)
+            );
+
+            CREATE TABLE IF NOT EXISTS market_payloads(
+              key TEXT PRIMARY KEY,
+              observed_at TEXT NOT NULL,
+              ingested_at TEXT NOT NULL,
+              payload TEXT NOT NULL
             );
             "#,
         )?;
@@ -268,6 +283,62 @@ impl Db {
                 },
             )
             .optional()
+    }
+
+    pub fn put_market_payload(
+        &self,
+        key: &str,
+        observed_at: &str,
+        payload: &serde_json::Value,
+    ) -> Result<bool> {
+        let serialized = serde_json::to_string(payload)
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+        let previous = self
+            .conn
+            .query_row(
+                "SELECT payload FROM market_payloads WHERE key=?1",
+                params![key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let changed = previous.as_deref() != Some(serialized.as_str());
+        self.conn.execute(
+            r#"
+            INSERT INTO market_payloads(key,observed_at,ingested_at,payload)
+            VALUES(?1,?2,?3,?4)
+            ON CONFLICT(key) DO UPDATE SET
+              observed_at=excluded.observed_at,
+              ingested_at=excluded.ingested_at,
+              payload=excluded.payload
+            "#,
+            params![
+                key,
+                observed_at,
+                chrono::Utc::now().to_rfc3339(),
+                serialized
+            ],
+        )?;
+        Ok(changed)
+    }
+
+    pub fn market_payloads(&self, prefix: &str) -> Result<Vec<MarketPayload>> {
+        let mut statement = self.conn.prepare(
+            "SELECT key,observed_at,ingested_at,payload FROM market_payloads WHERE key LIKE ?1 ORDER BY key",
+        )?;
+        let pattern = format!("{prefix}%");
+        let rows = statement.query_map(params![pattern], |row| {
+            let payload: String = row.get(3)?;
+            let payload = serde_json::from_str(&payload).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(3, Type::Text, Box::new(error))
+            })?;
+            Ok(MarketPayload {
+                key: row.get(0)?,
+                observed_at: row.get(1)?,
+                ingested_at: row.get(2)?,
+                payload,
+            })
+        })?;
+        rows.collect()
     }
 
     pub fn mark_series_checked(
@@ -595,5 +666,40 @@ mod tests {
                 .value,
             1.0
         );
+    }
+}
+#[cfg(test)]
+mod market_payload_tests {
+    use super::*;
+
+    #[test]
+    fn upsert_latest_snapshot_and_report_content_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = Db::open(&temp.path().join("test.db")).unwrap();
+        assert!(db
+            .put_market_payload(
+                "toss.calendar.KR",
+                "2026-08-24T09:00:00+09:00",
+                &serde_json::json!({"open":true})
+            )
+            .unwrap());
+        assert!(!db
+            .put_market_payload(
+                "toss.calendar.KR",
+                "2026-08-24T09:01:00+09:00",
+                &serde_json::json!({"open":true})
+            )
+            .unwrap());
+        assert!(db
+            .put_market_payload(
+                "toss.calendar.KR",
+                "2026-08-24T09:02:00+09:00",
+                &serde_json::json!({"open":false})
+            )
+            .unwrap());
+        let values = db.market_payloads("toss.").unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].observed_at, "2026-08-24T09:02:00+09:00");
+        assert_eq!(values[0].payload["open"], false);
     }
 }

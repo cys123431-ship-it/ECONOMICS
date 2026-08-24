@@ -114,10 +114,25 @@ fn dashboard_response(db: &Db) -> Result<String, Box<dyn std::error::Error>> {
     });
     let mut dashboard = serde_json::to_value(dashboard::build_at(db, as_of.as_deref())?)?;
     decorate_ticker_freshness(&mut dashboard);
+    let market_feeds = db
+        .market_payloads("toss.")?
+        .into_iter()
+        .map(|item| {
+            (
+                item.key,
+                json!({
+                    "observed_at": item.observed_at,
+                    "ingested_at": item.ingested_at,
+                    "data": item.payload,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
     Ok(serde_json::to_string(&json!({
         "snapshot": snapshot,
         "snapshot_history": snapshot_history,
         "dashboard": dashboard,
+        "market_feeds": market_feeds,
     }))?)
 }
 
@@ -294,6 +309,7 @@ mod tests {
             "overviewQuotes",
             "overviewRecovery",
             "overviewMarketMatrix",
+            "overviewTossPulse",
             "riskHeatmap",
             "proprietarySignals",
             "sourceHealth",
@@ -323,5 +339,23 @@ mod tests {
             value["indicators"][0]["label"],
             "코스피 · LATEST EOD · 2026-08-20"
         );
+    }
+
+    #[test]
+    fn dashboard_api_exposes_toss_market_payloads_without_account_data() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("server-market-feeds.db")).unwrap();
+        db.put_market_payload(
+            "toss.ranking.KR.turnover",
+            "2026-08-24T10:00:00+09:00",
+            &json!({"rankings":[{"symbol":"005930","name":"삼성전자"}]}),
+        )
+        .unwrap();
+        let response: Value = serde_json::from_str(&dashboard_response(&db).unwrap()).unwrap();
+        assert_eq!(
+            response["market_feeds"]["toss.ranking.KR.turnover"]["data"]["rankings"][0]["name"],
+            "삼성전자"
+        );
+        assert!(response.get("accounts").is_none());
     }
 }

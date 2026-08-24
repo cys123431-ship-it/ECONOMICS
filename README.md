@@ -1,8 +1,26 @@
 # ECONOMICS Radar
 
-> v0.5.1: official Toss intraday KOSPI/KOSDAQ with verified KRX EOD fallback.
+> v0.6.0: account-free Toss market intelligence across Korea and the U.S.
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.6.0
+
+v0.6.0은 토스증권 Open API에서 계좌번호 없이 조회할 수 있는 시장정보를 단순 지수 현재가에서 한국·미국 시장 인텔리전스로 확장합니다. 개인 계좌·보유자산·주문 API는 호출하지 않습니다.
+
+- KOSPI·KOSDAQ과 한국 국채 2·3·5·10·20·30년 수익률을 30초 주기로 한 번에 조회
+- USD/KRW 1분 참고 매매기준율·매수환율·스프레드를 원본 유효시각과 함께 표시
+- KOSPI·KOSDAQ 30일 일봉 OHLCV와 개인·외국인 전체·기관·연기금 순매수 시계열 추가
+- 수급 전용 표에서 개인·외국인·기관 7개 세부 분류·기타법인의 원본 매수액·매도액·순매수액을 모두 표시
+- 한국 KRX+NXT와 미국 데이·프리·정규·애프터마켓 운영시간 및 현재 세션 판정
+- 한국·미국 시장별 실시간 거래대금, 1일 급상승, 1일 급하락 TOP 10과 현재가·등락률·거래량·거래대금 표시
+- 랭킹 종목코드를 종목 기본정보 API로 다시 조회해 한글 종목명·상장시장·상품유형까지 표시
+- 종합 탭에 양 시장의 장상태와 거래대금·상승·하락 1위 요약 추가
+- 화면 지표를 113개에서 137개로 확대하고, 장상태·랭킹·상세 수급은 별도 고밀도 패널로 분리
+- OAuth 토큰 재사용, 401 1회 재발급, 429 `Retry-After` 1회 재시도, 랭킹 그룹 호출속도 제한 준수
+- 토스 키 미설정·허용 IP·일시 장애 시 기존 KRX·ECOS·FRED 값과 마지막 정상 시장 스냅샷 유지
+
+구현 범위와 공식 API 근거는 [토스증권 시장정보 확장](docs/TOSS_OPEN_API_MARKET_EXPANSION.md)에 정리했습니다.
 
 ## v0.5.1
 
@@ -85,7 +103,8 @@ v0.4.3은 화면에 오래된 값을 최신 시세처럼 보여 주던 경로와
 
 기본값은 API 성격과 호출 부담에 맞춰 소스별로 분리됩니다.
 
-- Binance 공개 시장 데이터와 토스증권 KOSPI·KOSDAQ 현재지수: **30초**
+- Binance 공개 시장 데이터와 토스증권 지수·국채·USD/KRW: **30초**
+- 토스증권 장 캘린더·지수 일봉·투자자 수급·한국/미국 랭킹: **5분**
 - 현재 FRED / Treasury / KRX 최신 공개 일별값: **5분**
 - ECOS: **30분**
 - KRX 전체 이력 / 설정형 공식 어댑터: **6시간**
@@ -114,7 +133,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.5.1-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.6.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -154,6 +173,7 @@ collect-ecos [series]
 collect-krx [api-id]
 collect-krx-live
 collect-toss-indices
+collect-toss-market
 collect-official
 collect-all [start]
 run [as-of]
@@ -164,7 +184,7 @@ demo
 
 `collect-krx-live`는 KOSPI·KOSDAQ 등 화면에 직접 쓰이는 KRX 핵심 계열을 오늘부터 역순으로 빠르게 확인합니다. `collect-krx`는 31개 승인 서비스의 일별 이력·파생 지표를 수집합니다.
 
-`collect-toss-indices`는 토스증권 공식 시장지표 API에서 KOSPI·KOSDAQ 현재지수를 조회합니다. 두 토스 키가 설정되지 않으면 네트워크 호출을 하지 않습니다.
+`collect-toss-indices`는 하위호환 명령으로 토스증권 공식 시장지표·환율 현재값을 조회합니다. `collect-toss-market`은 여기에 한국·미국 장 캘린더, 지수 일봉, 투자자 수급, 양 시장 랭킹과 종목명까지 모두 수집합니다. 두 토스 키가 설정되지 않으면 네트워크 호출을 하지 않습니다.
 
 인자 없이 `EconomicsRadar.exe`를 실행하면 `launch`와 동일하게 로컬 서버를 시작하고 기본 브라우저를 엽니다. 기본 주소는 `http://127.0.0.1:8765`입니다.
 

@@ -74,6 +74,7 @@ const FACTOR_LABEL_OVERRIDES = {
 const MARKET_CONFIG = {
   us: {
     title: '미국 시장',
+    country: 'US',
     riskKey: 'US_EQUITY',
     target: 'usMarket',
     factors: [
@@ -94,11 +95,15 @@ const MARKET_CONFIG = {
   },
   korea: {
     title: '한국 시장',
+    country: 'KR',
     riskKey: 'KOREA_EQUITY',
     target: 'koreaMarket',
     factors: ['KOREA_FIN_STAB', 'KOREA_MARKET_INTERNALS', 'KOREA_MACRO', 'USD', 'LIQUIDITY', 'CREDIT', 'BANKING', 'RATES'],
     sections: [
       ['한국 주가지수·공식 등락률·환율', 'KR EQUITY / FX', ['kospi', 'kospi_return', 'kosdaq', 'kosdaq_return', 'usdkrw', 'kr_base_rate']],
+      ['코스피·코스닥 당일 OHLCV', 'KR INDEX SESSION OHLCV', ['kospi_day_open', 'kospi_day_high', 'kospi_day_low', 'kospi_day_volume', 'kosdaq_day_open', 'kosdaq_day_high', 'kosdaq_day_low', 'kosdaq_day_volume']],
+      ['코스피·코스닥 핵심 투자자 순매수', 'KR INVESTOR NET FLOW', ['kospi_individual_flow', 'kospi_foreigner_flow', 'kospi_institution_flow', 'kospi_pension_flow', 'kosdaq_individual_flow', 'kosdaq_foreigner_flow', 'kosdaq_institution_flow', 'kosdaq_pension_flow']],
+      ['한국 국채 만기별 실시간 수익률·환율', 'KR SOVEREIGN CURVE / FX', ['kr_bond_2y', 'kr_bond_3y', 'kr_bond_5y', 'kr_bond_10y', 'kr_bond_20y', 'kr_bond_30y', 'usdkrw_buy', 'usdkrw_basis_bp']],
       ['한국 시장 내부체력·외부수요', 'KR BREADTH / MACRO', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth', 'kr_cli', 'cn_cli']],
       ['코스피·코스닥 시장규모', 'KR MARKET SCALE', ['kospi_value', 'kosdaq_value', 'kospi_volume', 'kosdaq_volume', 'kospi_cap', 'kosdaq_cap', 'kospi_issues', 'kosdaq_issues']],
       ['코스피200 선물·옵션 원본', 'K200 FUTURES / OPTIONS', ['krx_basis', 'krx_futures_oi', 'krx_futures_volume', 'krx_futures_value', 'krx_put_call', 'krx_option_iv', 'krx_options_oi', 'krx_options_volume', 'krx_options_value']],
@@ -264,6 +269,8 @@ function formatValue(indicator) {
       return Math.abs(value) >= 1e12
         ? `₩${(value / 1e12).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}조`
         : `₩${(value / 1e8).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}억`;
+    case 'basis_points':
+      return `${value.toFixed(digits)}bp`;
     case 'contracts':
       return compact(value, 2);
     case 'count':
@@ -297,7 +304,7 @@ function formatChange(indicator) {
   const adjusted = ['rate', 'fraction_percent'].includes(indicator.unit) ? change * 100 : change;
   const suffix = indicator.unit === 'percent' || indicator.unit === 'rate' || indicator.unit === 'fraction_percent'
     ? 'pp'
-    : indicator.unit === 'points' ? 'p' : '';
+    : indicator.unit === 'points' ? 'p' : indicator.unit === 'basis_points' ? 'bp' : '';
   return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}${suffix}`;
 }
 
@@ -545,6 +552,32 @@ function renderOverview(payload, indicators) {
   renderSources(snapshot.sources || {});
   renderOverviewRecovery(payload);
   renderOverviewMatrix(indicators);
+  renderOverviewTossPulse(payload);
+}
+
+function overviewLeader(feed) {
+  const item = feed?.data?.rankings?.[0];
+  if (!item) return '랭킹 데이터 대기';
+  const rate = finite(item.price?.changeRate);
+  return `${item.name || item.symbol} ${rate === null ? '' : `${rate >= 0 ? '+' : ''}${(rate * 100).toFixed(2)}%`}`.trim();
+}
+
+function renderOverviewTossPulse(payload) {
+  const container = $('overviewTossPulse');
+  clear(container);
+  for (const [country, label] of [['KR', '한국'], ['US', '미국']]) {
+    const model = marketSessionModel(tossFeed(payload, `calendar.${country}`), country);
+    const card = el('article', `overview-pulse-card ${model.tone}`);
+    card.append(
+      el('small', '', `${country} MARKET`),
+      el('strong', '', `${label} · ${model.state}`),
+      el('p', '', model.detail),
+      el('span', '', `거래대금 1위 · ${overviewLeader(tossFeed(payload, `ranking.${country}.turnover`))}`),
+      el('span', '', `상승 1위 · ${overviewLeader(tossFeed(payload, `ranking.${country}.gainers`))}`),
+      el('span', '', `하락 1위 · ${overviewLeader(tossFeed(payload, `ranking.${country}.losers`))}`)
+    );
+    container.append(card);
+  }
 }
 
 function renderOverviewRecovery(payload) {
@@ -798,6 +831,10 @@ function renderMarket(config, payload, indicators) {
   hero.append(gauge, summary, lightArea);
   container.append(hero);
 
+  if (config.country) {
+    container.append(renderTossMarketIntelligence(config, payload));
+  }
+
   const recoveryPanel = el('section', 'terminal-panel market-recovery-panel');
   const recoveryHeading = el('div', 'panel-heading');
   recoveryHeading.append(el('span', '', 'CRISIS EXIT GATES'), el('strong', '', `${config.title} 위기 탈출 조건`));
@@ -845,6 +882,191 @@ function renderMarket(config, payload, indicators) {
   }
   factorPanel.append(heading, board);
   container.append(factorPanel);
+}
+
+function tossFeed(payload, key) {
+  return payload?.market_feeds?.[`toss.${key}`] || null;
+}
+
+function feedSyncLabel(feed) {
+  if (!feed?.ingested_at) return 'NOT SYNCED';
+  const synced = new Date(feed.ingested_at);
+  const ageMinutes = Math.max(0, (Date.now() - synced.getTime()) / 60000);
+  if (!Number.isFinite(ageMinutes)) return 'SYNC UNKNOWN';
+  if (ageMinutes <= 10) return 'SYNC OK';
+  if (ageMinutes <= 60) return `DELAYED ${Math.floor(ageMinutes)}m`;
+  if (ageMinutes < 1440) return `STALE ${Math.floor(ageMinutes / 60)}h`;
+  return `STALE ${Math.floor(ageMinutes / 1440)}d`;
+}
+
+function compactMoney(value, currency = 'KRW') {
+  const number = finite(value);
+  if (number === null) return '—';
+  const sign = number > 0 ? '+' : number < 0 ? '−' : '';
+  const absolute = Math.abs(number);
+  if (currency === 'USD') {
+    return `${sign}$${compact(absolute, 2)}`;
+  }
+  if (absolute >= 1e12) return `${sign}₩${(absolute / 1e12).toFixed(2)}조`;
+  if (absolute >= 1e8) return `${sign}₩${(absolute / 1e8).toFixed(1)}억`;
+  return `${sign}₩${absolute.toLocaleString('ko-KR', { maximumFractionDigits: 0 })}`;
+}
+
+function marketSessionModel(feed, country) {
+  const calendar = feed?.data;
+  const today = calendar?.today;
+  if (!today) return { state: 'DATA WAIT', detail: '장 운영 캘린더를 기다리는 중', tone: 'unknown', rows: [] };
+  const rowsForDay = (day) => {
+    const source = country === 'KR' ? day?.integrated : day;
+    const sessions = country === 'KR'
+      ? [['프리마켓(NXT)', source?.preMarket], ['정규장(KRX+NXT)', source?.regularMarket], ['애프터마켓(NXT)', source?.afterMarket]]
+      : [['데이마켓', source?.dayMarket], ['프리마켓', source?.preMarket], ['정규장', source?.regularMarket], ['애프터마켓', source?.afterMarket]];
+    return sessions
+      .filter(([, session]) => session?.startTime && session?.endTime)
+      .map(([label, session]) => ({ label, marketDate: day?.date, start: new Date(session.startTime), end: new Date(session.endTime) }))
+      .filter((item) => Number.isFinite(item.start.getTime()) && Number.isFinite(item.end.getTime()));
+  };
+  const todayRows = rowsForDay(today);
+  const allRows = [calendar.previousBusinessDay, today, calendar.nextBusinessDay]
+    .flatMap(rowsForDay)
+    .sort((left, right) => left.start - right.start);
+  const now = new Date();
+  const active = allRows.find((item) => now >= item.start && now < item.end);
+  if (active) {
+    const activeRows = allRows.filter((item) => item.marketDate === active.marketDate);
+    return { state: `${active.label} OPEN`, detail: `${sessionTime(active.start)}–${sessionTime(active.end)}`, tone: 'open', rows: activeRows };
+  }
+  if (!todayRows.length) {
+    return { state: '휴장', detail: `${today.date} 휴장 · 다음 영업일 ${calendar.nextBusinessDay?.date || '확인 중'}`, tone: 'closed', rows: [] };
+  }
+  const next = allRows.find((item) => now < item.start);
+  const nextIsToday = next && todayRows.some((item) => item.start.getTime() === next.start.getTime());
+  if (nextIsToday) return { state: '개장 전', detail: `${next.label} ${sessionTime(next.start)} 시작`, tone: 'waiting', rows: todayRows };
+  return { state: '장 종료', detail: `다음 영업일 ${calendar.nextBusinessDay?.date || '확인 중'}`, tone: 'closed', rows: todayRows };
+}
+
+function sessionTime(date) {
+  return date.toLocaleTimeString('ko-KR', {
+    timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false
+  });
+}
+
+function calendarCard(feed, country) {
+  const model = marketSessionModel(feed, country);
+  const card = el('article', `session-card ${model.tone}`);
+  card.append(el('small', '', country === 'KR' ? 'KRX + NXT INTEGRATED' : 'US MARKET SESSIONS'));
+  card.append(el('strong', '', model.state), el('p', '', model.detail));
+  const times = el('div', 'session-times');
+  for (const row of model.rows) {
+    times.append(el('span', '', `${row.label} ${sessionTime(row.start)}–${sessionTime(row.end)}`));
+  }
+  card.append(times, el('em', '', `TOSS · ${feedSyncLabel(feed)} · ${formatTime(feed?.observed_at)}`));
+  return card;
+}
+
+function rankingTable(feed, title, mode) {
+  const wrapper = el('article', 'ranking-card');
+  const data = feed?.data || {};
+  wrapper.append(el('h4', '', title), el('small', '', data.rankedAt ? `기준 ${formatTime(data.rankedAt)} · ${feedSyncLabel(feed)}` : 'DATA WAIT'));
+  const table = el('div', 'ranking-table');
+  const header = el('div', 'ranking-row ranking-head');
+  header.append(el('span', '', '# 종목'), el('span', '', '현재가'), el('span', '', '등락률'), el('span', '', mode === 'turnover' ? '거래대금' : '거래량'));
+  table.append(header);
+  const rows = Array.isArray(data.rankings) ? data.rankings : [];
+  if (!rows.length) {
+    table.append(el('p', 'market-data-wait', '토스증권 Open API 랭킹 데이터 대기'));
+  }
+  for (const item of rows.slice(0, 10)) {
+    const rate = finite(item.price?.changeRate);
+    const currency = item.currency || 'KRW';
+    const price = finite(item.price?.lastPrice);
+    const row = el('div', 'ranking-row');
+    const identity = el('span', 'ranking-identity');
+    identity.append(el('b', '', `${item.rank}. ${item.name || item.symbol}`), el('small', '', `${item.symbol} · ${item.market || item.securityType || ''}`));
+    row.append(
+      identity,
+      el('span', '', price === null ? '—' : currency === 'USD' ? `$${price.toLocaleString('en-US')}` : `₩${price.toLocaleString('ko-KR')}`),
+      el('span', rate === null ? 'flat' : rate > 0 ? 'up' : rate < 0 ? 'down' : 'flat', rate === null ? '—' : `${rate >= 0 ? '+' : ''}${(rate * 100).toFixed(2)}%`),
+      el('span', '', mode === 'turnover' ? compactMoney(item.tradingAmount, currency) : compact(finite(item.tradingVolume) || 0, 2))
+    );
+    table.append(row);
+  }
+  wrapper.append(table);
+  return wrapper;
+}
+
+const FLOW_ROWS = [
+  ['개인', (record) => record.individual],
+  ['외국인 전체', (record) => record.foreigner],
+  ['기관 합계', (record) => record.institution],
+  ['금융투자', (record) => record.institution?.breakdown?.financialInvestment],
+  ['보험', (record) => record.institution?.breakdown?.insurance],
+  ['투신', (record) => record.institution?.breakdown?.trust],
+  ['사모펀드', (record) => record.institution?.breakdown?.privateEquityFund],
+  ['은행', (record) => record.institution?.breakdown?.bank],
+  ['기타금융기관', (record) => record.institution?.breakdown?.otherFinancialInstitution],
+  ['연기금', (record) => record.institution?.breakdown?.pensionFund],
+  ['기타법인', (record) => record.otherCorporation]
+];
+
+function investorFlowTable(feed, market) {
+  const wrapper = el('article', 'flow-card');
+  const record = feed?.data?.records?.[0];
+  wrapper.append(el('h4', '', `${market} 투자자별 매매대금`), el('small', '', record ? `${record.date} · ${formatTime(record.updatedAt)} · ${feedSyncLabel(feed)}` : 'DATA WAIT'));
+  const table = el('div', 'flow-table');
+  const header = el('div', 'flow-row flow-head');
+  header.append(el('span', '', '투자자'), el('span', '', '매수'), el('span', '', '매도'), el('span', '', '순매수'));
+  table.append(header);
+  if (!record) {
+    table.append(el('p', 'market-data-wait', '계좌번호 없이 조회되는 공식 KRX 수급 데이터 대기'));
+  }
+  for (const [label, getter] of FLOW_ROWS) {
+    const amount = record ? getter(record) : null;
+    if (!amount) continue;
+    const buy = finite(amount.buyAmount);
+    const sell = finite(amount.sellAmount);
+    const net = buy === null || sell === null ? null : buy - sell;
+    const row = el('div', 'flow-row');
+    row.append(
+      el('span', '', label),
+      el('span', '', compactMoney(buy)),
+      el('span', '', compactMoney(sell)),
+      el('strong', net === null ? 'flat' : net > 0 ? 'up' : net < 0 ? 'down' : 'flat', compactMoney(net))
+    );
+    table.append(row);
+  }
+  wrapper.append(table);
+  return wrapper;
+}
+
+function renderTossMarketIntelligence(config, payload) {
+  const country = config.country;
+  const panel = el('section', 'terminal-panel toss-intelligence-panel');
+  const heading = el('div', 'panel-heading');
+  heading.append(el('span', '', 'TOSS OPEN API · ACCOUNT-FREE'), el('strong', '', `${config.title} 장상태·실시간 랭킹·원본수급`));
+  panel.append(heading);
+  const calendar = tossFeed(payload, `calendar.${country}`);
+  const feedsExist = Object.keys(payload?.market_feeds || {}).some((key) => key.startsWith('toss.'));
+  if (!feedsExist) {
+    panel.append(el('p', 'toss-setup-note', '토스증권 Open API 데이터 대기 · E:\\EconomicsRadar\\.env에 TOSSINVEST_CLIENT_ID와 TOSSINVEST_CLIENT_SECRET을 입력하면 자동 활성화됩니다.'));
+  }
+  const pulse = el('div', 'market-pulse-grid');
+  pulse.append(calendarCard(calendar, country));
+  pulse.append(
+    rankingTable(tossFeed(payload, `ranking.${country}.turnover`), '실시간 시장 거래대금 TOP 10', 'turnover'),
+    rankingTable(tossFeed(payload, `ranking.${country}.gainers`), '1일 급상승 TOP 10', 'gainers'),
+    rankingTable(tossFeed(payload, `ranking.${country}.losers`), '1일 급하락 TOP 10', 'losers')
+  );
+  panel.append(pulse);
+  if (country === 'KR') {
+    const flowGrid = el('div', 'investor-flow-grid');
+    flowGrid.append(
+      investorFlowTable(tossFeed(payload, 'investor.KOSPI'), 'KOSPI'),
+      investorFlowTable(tossFeed(payload, 'investor.KOSDAQ'), 'KOSDAQ')
+    );
+    panel.append(flowGrid);
+  }
+  return panel;
 }
 
 function renderCryptoRegime(indicators) {
