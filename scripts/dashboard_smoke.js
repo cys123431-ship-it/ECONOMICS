@@ -56,6 +56,8 @@ const ids = Object.fromEntries([
   'usMarket',
   'koreaMarket',
   'cryptoMarket',
+  'krLiveKospi',
+  'krLiveKosdaq',
   'lastUpdated'
 ].map((id) => [id, new FakeElement('div', id)]));
 
@@ -214,10 +216,16 @@ if (context.recoveryModel('us', { snapshot: { markets: {}, nodes: {} } }).progre
 }
 
 const html = fs.readFileSync('src/dashboard.html', 'utf8');
-for (const symbol of ['KRX:KOSPI', 'KRX:KOSDAQ']) {
-  if (!html.includes(`<tv-single-ticker symbol="${symbol}"`)) {
-    throw new Error(`TradingView widget is missing ${symbol}`);
+for (const id of ['krLiveKospi', 'krLiveKosdaq']) {
+  if (!html.includes(`id="${id}"`)) {
+    throw new Error(`Korean live index card is missing ${id}`);
   }
+}
+if (html.includes('tradingview-widget.com')) {
+  throw new Error('restricted TradingView widget must not be loaded');
+}
+if (!fs.readFileSync('src/dashboard.js', 'utf8').includes("fetch('/api/kr-indices-live'")) {
+  throw new Error('Korean live index endpoint is not loaded');
 }
 if (!html.includes('위기 점수와 공식 지표 계산에는 사용하지 않음')) {
   throw new Error('external quote calculation boundary is not disclosed');

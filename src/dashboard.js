@@ -172,6 +172,8 @@ const TAB_NAMES = ['overview', 'us', 'korea', 'crypto'];
 let workerWasRunning = false;
 let dashboardErrors = [];
 let collectionErrors = [];
+let officialKrIndices = new Map();
+let liveKrIndices = new Map();
 
 function factorLabel(config, name) {
   const market = config?.riskKey === 'US_EQUITY'
@@ -299,6 +301,115 @@ function formatChange(indicator) {
     ? 'pp'
     : indicator.unit === 'points' ? 'p' : '';
   return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}${suffix}`;
+}
+
+function krChangeClass(value) {
+  const number = finite(value);
+  if (number === null || number === 0) return 'flat';
+  return number > 0 ? 'up' : 'down';
+}
+
+function formatKrIndex(value) {
+  const number = finite(value);
+  return number === null
+    ? '—'
+    : number.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+}
+
+function signedKrIndex(value) {
+  const number = finite(value);
+  if (number === null) return '—';
+  return `${number > 0 ? '+' : ''}${number.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}`;
+}
+
+const KR_INDEX_CARDS = {
+  KOSPI: {
+    target: 'krLiveKospi',
+    name: '코스피 종합지수',
+    detail: 'https://m.stock.naver.com/domestic/index/KOSPI'
+  },
+  KOSDAQ: {
+    target: 'krLiveKosdaq',
+    name: '코스닥 종합지수',
+    detail: 'https://m.stock.naver.com/domestic/index/KOSDAQ'
+  }
+};
+
+function renderKrIndexCard(code) {
+  const config = KR_INDEX_CARDS[code];
+  const live = liveKrIndices.get(code);
+  const official = officialKrIndices.get(code.toLowerCase());
+  const quote = live || official;
+  const target = $(config.target);
+  const direction = krChangeClass(quote?.change);
+  target.className = `kr-live-index-card ${direction}`;
+  clear(target);
+
+  const header = el('div', 'kr-live-header');
+  const title = el('div', 'kr-live-title');
+  title.append(el('span', '', code), el('strong', '', config.name));
+  const status = live
+    ? `${live.delay_label || '지연 여부 미표시'} · ${live.market_status_label || '시장상태 확인'}`
+    : official
+      ? '외부 연결 실패 · KRX 공식 EOD'
+      : '시세 연결 실패';
+  header.append(title, el('span', 'kr-live-status', status));
+
+  const priceRow = el('div', 'kr-live-price-row');
+  priceRow.append(
+    el('strong', 'kr-live-price', formatKrIndex(quote?.value)),
+    el(
+      'span',
+      `kr-live-change ${direction}`,
+      `${signedKrIndex(quote?.change)} (${signedKrIndex(quote?.change_pct)}%)`
+    )
+  );
+
+  const observedAt = live
+    ? formatTime(live.observed_at)
+    : official?.observed_at || '기준시각 없음';
+  const source = live ? 'Npay 증권 장중 참고' : official ? 'KRX 공식 최신 종가' : '데이터 없음';
+  const meta = el('div', 'kr-live-meta');
+  meta.append(el('span', '', observedAt), el('span', '', source));
+
+  const links = el('div', 'kr-live-links');
+  const detail = el('a', '', '실시간 상세·차트 ↗');
+  detail.href = live?.source_url || config.detail;
+  detail.target = '_blank';
+  detail.rel = 'noopener noreferrer';
+  const krx = el('a', '', 'KRX 공식 데이터 ↗');
+  krx.href = 'https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd';
+  krx.target = '_blank';
+  krx.rel = 'noopener noreferrer';
+  links.append(detail, krx);
+
+  target.append(header, priceRow, meta, links);
+}
+
+function renderKrIndexCards() {
+  Object.keys(KR_INDEX_CARDS).forEach(renderKrIndexCard);
+}
+
+async function loadKrIndexReference() {
+  try {
+    const response = await fetch('/api/kr-indices-live', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    liveKrIndices = new Map(
+      (Array.isArray(payload.quotes) ? payload.quotes : [])
+        .filter((quote) => quote && quote.code)
+        .map((quote) => [quote.code, quote])
+    );
+  } catch (_error) {
+    liveKrIndices = new Map();
+  }
+  renderKrIndexCards();
 }
 
 function conciseCollectionError(error) {
@@ -979,6 +1090,12 @@ function renderSafely(label, renderFn, errors) {
 
 function render(payload) {
   const indicators = indicatorMap(payload);
+  officialKrIndices = new Map(
+    ['kospi', 'kosdaq']
+      .map((key) => [key, indicators[key]])
+      .filter(([, indicator]) => indicator)
+  );
+  renderKrIndexCards();
   const errors = [];
   renderSafely('상단 시세', () => renderTicker(indicators), errors);
   renderSafely('종합 탭', () => renderOverview(payload, indicators), errors);
@@ -1120,6 +1237,8 @@ document.addEventListener('keydown', (event) => {
 
 $('refreshButton').addEventListener('click', requestRefresh);
 loadDashboard();
+loadKrIndexReference();
 loadRefreshStatus();
 setInterval(loadDashboard, 60000);
+setInterval(loadKrIndexReference, 30000);
 setInterval(loadRefreshStatus, 3000);

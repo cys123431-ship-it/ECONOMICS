@@ -7,7 +7,6 @@
   <title>ECONOMICS Radar Terminal</title>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
-  <script type="module" src="https://widgets.tradingview-widget.com/w/kr/tv-single-ticker.js"></script>
 </head>
 <body>
   <header class="terminal-header">
@@ -78,25 +77,17 @@
 
     <section id="tab-korea" class="tab-panel" role="tabpanel" hidden>
       <div class="screen-title"><div><span class="screen-code">KR MARKET &lt;GO&gt;</span><h2>한국 시장 모니터</h2></div><span class="asof market-asof">—</span></div>
-      <section class="terminal-panel tradingview-panel" aria-labelledby="tradingview-korea-title">
-        <div class="panel-heading"><span>EXTERNAL INTRADAY REFERENCE</span><strong id="tradingview-korea-title">KOSPI·KOSDAQ 장중 참고 시세</strong></div>
-        <div class="tradingview-index-grid">
-          <article class="tradingview-index-card">
-            <div class="tradingview-index-label"><span>KRX:KOSPI</span><strong>코스피 종합지수</strong></div>
-            <tv-single-ticker symbol="KRX:KOSPI" theme="dark" transparent>
-              <a href="https://kr.tradingview.com/symbols/KRX-KOSPI/" target="_blank" rel="noopener noreferrer">TradingView에서 코스피 보기</a>
-            </tv-single-ticker>
-            <a class="tradingview-detail-link" href="https://kr.tradingview.com/symbols/KRX-KOSPI/" target="_blank" rel="noopener noreferrer">전체 차트 열기 ↗</a>
+      <section class="terminal-panel kr-live-panel" aria-labelledby="kr-live-title">
+        <div class="panel-heading"><span>KR INDEX LIVE REFERENCE</span><strong id="kr-live-title">KOSPI·KOSDAQ 장중 참고 시세</strong></div>
+        <div class="kr-live-index-grid">
+          <article id="krLiveKospi" class="kr-live-index-card" aria-live="polite">
+            <span class="kr-live-loading">코스피 시세 불러오는 중…</span>
           </article>
-          <article class="tradingview-index-card">
-            <div class="tradingview-index-label"><span>KRX:KOSDAQ</span><strong>코스닥 종합지수</strong></div>
-            <tv-single-ticker symbol="KRX:KOSDAQ" theme="dark" transparent>
-              <a href="https://kr.tradingview.com/symbols/KRX-KOSDAQ/" target="_blank" rel="noopener noreferrer">TradingView에서 코스닥 보기</a>
-            </tv-single-ticker>
-            <a class="tradingview-detail-link" href="https://kr.tradingview.com/symbols/KRX-KOSDAQ/" target="_blank" rel="noopener noreferrer">전체 차트 열기 ↗</a>
+          <article id="krLiveKosdaq" class="kr-live-index-card" aria-live="polite">
+            <span class="kr-live-loading">코스닥 시세 불러오는 중…</span>
           </article>
         </div>
-        <p class="tradingview-note">TradingView 제공 외부 장중 참고 시세 · 거래소 정책에 따라 지연될 수 있음 · 위기 점수와 공식 지표 계산에는 사용하지 않음</p>
+        <p class="kr-live-note">Npay 증권 외부 참고 시세 · 30초마다 확인 · 연결 실패 시 KRX 최신 공식 종가 표시 · 위기 점수와 공식 지표 계산에는 사용하지 않음</p>
       </section>
       <div id="koreaMarket" class="market-terminal"></div>
     </section>

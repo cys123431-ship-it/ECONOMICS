@@ -1,4 +1,4 @@
-use crate::{dashboard, db::Db, refresh::RefreshControl};
+use crate::{dashboard, db::Db, kr_index_reference, refresh::RefreshControl};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::{json, Value};
 use std::{
@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' https://widgets.tradingview-widget.com; connect-src 'self' https://*.tradingview.com https://*.tradingview-widget.com wss://*.tradingview.com wss://*.tradingview-widget.com; img-src 'self' data: https://*.tradingview.com https://*.tradingview-widget.com; font-src 'self' data: https://*.tradingview.com https://*.tradingview-widget.com; frame-src https://widgets.tradingview-widget.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
 const DASHBOARD_HTML: &str = include_str!("dashboard.html");
 const DASHBOARD_CSS: &str = include_str!("dashboard.css");
 const DASHBOARD_JS: &str = include_str!("dashboard.js");
@@ -192,6 +192,15 @@ fn handle(
                 &body,
             )
         }
+        "/api/kr-indices-live" => {
+            let body = serde_json::to_string(&kr_index_reference::fetch())?;
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
         "/api/refresh-status" => {
             let body = refresh.map(RefreshControl::status_json).unwrap_or_else(|| {
                 r#"{"running":false,"errors":["automatic refresh is disabled"]}"#.into()
@@ -265,18 +274,13 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("src=\"/app.js\""));
         assert!(DASHBOARD_HTML.contains("defer"));
         assert!(!DASHBOARD_HTML.contains("<script>"));
-        assert!(DASHBOARD_HTML
-            .contains("src=\"https://widgets.tradingview-widget.com/w/kr/tv-single-ticker.js\""));
+        assert!(!DASHBOARD_HTML.contains("tradingview-widget.com"));
         assert!(DASHBOARD_HTML.contains("href=\"/app.css\""));
         assert!(!DASHBOARD_HTML.contains("<style>"));
         assert!(CONTENT_SECURITY_POLICY.contains("script-src 'self'"));
-        assert!(CONTENT_SECURITY_POLICY.contains("https://widgets.tradingview-widget.com"));
-        assert!(CONTENT_SECURITY_POLICY.contains("style-src 'self'"));
         assert!(CONTENT_SECURITY_POLICY.contains("style-src 'self' 'unsafe-inline'"));
         assert!(CONTENT_SECURITY_POLICY.contains("connect-src 'self'"));
-        assert!(
-            CONTENT_SECURITY_POLICY.contains("frame-src https://widgets.tradingview-widget.com")
-        );
+        assert!(!CONTENT_SECURITY_POLICY.contains("tradingview.com"));
         assert!(DASHBOARD_JS.contains("fetch('/api/dashboard'"));
         assert!(DASHBOARD_JS.contains("대시보드 API 실패"));
         assert!(DASHBOARD_JS.contains("renderMarket"));
@@ -313,8 +317,9 @@ mod tests {
                 "dashboard HTML is missing #{id}"
             );
         }
-        assert!(DASHBOARD_HTML.contains("<tv-single-ticker symbol=\"KRX:KOSPI\""));
-        assert!(DASHBOARD_HTML.contains("<tv-single-ticker symbol=\"KRX:KOSDAQ\""));
+        assert!(DASHBOARD_HTML.contains("id=\"krLiveKospi\""));
+        assert!(DASHBOARD_HTML.contains("id=\"krLiveKosdaq\""));
+        assert!(DASHBOARD_JS.contains("fetch('/api/kr-indices-live'"));
         assert!(DASHBOARD_HTML.contains("위기 점수와 공식 지표 계산에는 사용하지 않음"));
     }
 

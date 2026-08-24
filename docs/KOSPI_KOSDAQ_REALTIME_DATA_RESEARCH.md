@@ -5,28 +5,32 @@
 
 ## 결론
 
-앱의 공식 원본값과 위기 계산은 기존처럼 KRX Open API의 KOSPI·KOSDAQ 일별시세정보를 사용한다. 장중 가격을 빠르게 확인하는 용도로만 한국 탭에 TradingView Single Ticker 위젯 두 개를 별도로 표시한다.
+TradingView의 KRX 지수 위젯은 사용하지 않는다. TradingView 공식 FAQ는 “This symbol is only available on TradingView”가 해당 심볼을 어떤 시간 범위에서도 외부 위젯에 표시할 권한이 없다는 의미라고 설명한다. 유료 TradingView 요금제로도 웹사이트 위젯의 실시간 데이터 권한은 생기지 않는다. [TradingView 데이터 FAQ](https://www.tradingview.com/widget-docs/faq/data/)
 
-- 코스피 위젯 심볼: `KRX:KOSPI`
-- 코스닥 위젯 심볼: `KRX:KOSDAQ`
-- 위젯 값은 SQLite에 저장하지 않고 규칙 엔진·위기 점수·백테스트에 전달하지 않는다.
-- 카드나 링크를 누르면 TradingView의 해당 지수 전체 페이지를 새 탭으로 연다.
-- 증권사 OAuth, API 키, 허용 IP, 고정 공인 IP는 필요하지 않다.
+대신 앱 서버가 Npay 증권의 공개 KOSPI·KOSDAQ 조회 응답을 30초마다 확인해 다음 항목을 자체 카드에 표시한다.
 
-TradingView 공식 문서는 Single Ticker를 한 심볼의 가격과 등락률을 보여 주는 위젯으로 정의하며, 위젯 자체 데이터가 포함되어 별도 API 연결이 필요하지 않다고 설명한다. [Single Ticker 문서](https://www.tradingview.com/widget-docs/widgets/tickers/single-ticker/), [위젯 시작 안내](https://www.tradingview.com/widget-docs/getting-started/)
+- 지수 원본값
+- 전일 대비 등락폭과 등락률
+- 장중·장마감 상태
+- 제공 지연 표기와 기준시각
+- Npay 증권 상세 차트 및 KRX 정보데이터시스템 링크
 
-## KRX와 TradingView의 역할 분리
+별도 API 키, 증권사 계좌, 허용 IP 또는 고정 공인 IP는 필요하지 않다.
 
-KRX Open API의 KOSPI·KOSDAQ 서비스는 일별시세정보다. 앱은 한국시간 오늘부터 역순으로 최신 공개 행을 확인하고 `LATEST VERIFIED`, `PUBLISHED EOD`, `STALE` 상태와 기준일을 명시한다. 이 값이 앱의 공식 데이터 계보와 위기 계산에 사용된다. [KRX Open API 서비스 목록](https://openapi.krx.co.kr/contents/OPP/INFO/service/OPPINFO004.cmd)
+## 공식 계산값과 외부 참고값의 분리
 
-TradingView 위젯은 브라우저가 TradingView 서버에 직접 연결해 `KRX:KOSPI`, `KRX:KOSDAQ`을 표시한다. 거래소 및 제공자 정책에 따라 지연될 수 있으므로 화면에 “외부 장중 참고 시세”와 “위기 점수 미사용”을 함께 표기한다. [KOSPI 심볼](https://www.tradingview.com/symbols/KRX-KOSPI/), [KOSDAQ 심볼](https://www.tradingview.com/symbols/KRX-KOSDAQ/)
+KRX Open API의 KOSPI·KOSDAQ 서비스는 일별시세정보다. 앱은 한국시간 오늘부터 역순으로 최신 공개 행을 확인하고 `LATEST VERIFIED`, `PUBLISHED EOD`, `STALE` 상태와 기준일을 명시한다. 이 KRX 값만 앱의 공식 데이터 계보, SQLite 이력, 룰 엔진, 위기 점수와 백테스트에 사용한다. [KRX Open API 서비스 목록](https://openapi.krx.co.kr/contents/OPP/INFO/service/OPPINFO004.cmd)
+
+Npay 증권 페이지는 지수를 실시간으로 제공한다고 표시하며 국내 증시 기본 데이터의 출처를 KRX로 밝힌다. 앱의 장중 카드는 이 공개 조회값을 화면 참고용으로만 사용하고 SQLite에 저장하지 않는다. [Npay 증권 KOSPI](https://finance.naver.com/sise/sise_index.naver?code=KOSPI), [Npay 증권 KOSDAQ](https://finance.naver.com/sise/sise_index.naver?code=KOSDAQ)
+
+외부 조회가 실패하거나 값의 숫자 형식이 유효하지 않으면 값을 추정하거나 0으로 채우지 않는다. 해당 카드에는 DB에 보존된 KRX 최신 공식 종가와 기준일을 대신 표시한다.
 
 ## 보안과 장애 경계
 
-Content Security Policy는 앱 자체 리소스 외에 TradingView 위젯 모듈, 이미지·글꼴, HTTPS·WebSocket 시세 연결, 위젯 데이터 프레임만 허용한다. 위젯이 Shadow DOM에 자체 스타일을 적용하므로 `style-src`의 인라인 스타일도 허용하지만 외부 스크립트와 프레임은 TradingView 위젯 호스트로 제한한다. TradingView 스크립트가 차단되거나 인터넷이 끊기면 카드 안의 직접 링크가 남으며, KRX·FRED·ECOS 수집과 위기 계산은 영향을 받지 않는다.
+브라우저는 `/api/kr-indices-live`라는 로컬 same-origin 엔드포인트만 호출한다. 외부 조회는 Rust 로컬 서버가 제한된 시간 안에 수행하므로 Npay 도메인을 브라우저 Content Security Policy에 추가하지 않는다. TradingView 외부 스크립트·WebSocket·프레임 허용도 모두 제거한다.
 
-TradingView는 위젯이 쿠키를 설정하지 않지만 정상 동작을 위해 임베드 페이지 URL, 위젯 유형, 표시 심볼, IP 주소를 처리한다고 안내한다. [TradingView 위젯 일반 FAQ](https://www.tradingview.com/widget-docs/faq/general/)
+외부 참고값 오류는 FRED·ECOS·KRX 수집과 위기 계산을 중단시키지 않는다. 응답에는 `used_in_risk_engine: false`를 명시해 계산 경계를 기계적으로도 드러낸다.
 
 ## 사용 범위
 
-외부 위젯은 개인 로컬 화면의 참고용이다. 외부 재배포나 상업적 시세 제공은 각 데이터 제공자의 이용 조건과 거래소 권한을 별도로 확인해야 한다.
+이 기능은 사용자 개인 노트북의 로컬 참고 화면을 위한 것이다. Npay 증권은 시세의 오류·지연 가능성과 무단 배포 제한을 고지하므로 공개 웹서비스나 상업적 재배포로 전환할 경우 데이터 제공자 및 거래소와 별도 계약·권한을 확인해야 한다.

@@ -4,6 +4,7 @@ mod dashboard;
 mod db;
 mod dsl;
 mod engine;
+mod kr_index_reference;
 mod krx_analytics;
 mod live_market;
 mod refresh;

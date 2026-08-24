@@ -1,19 +1,20 @@
 # ECONOMICS Radar
 
-> v0.7.0: KRX/FRED/ECOS 공식 계산 + TradingView 한국 지수 장중 참고 위젯
+> v0.7.1: KRX/FRED/ECOS 공식 계산 + KOSPI·KOSDAQ 장중 참고 카드
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
 
-## v0.7.0
+## v0.7.1
 
-v0.7.0은 고정 공인 IP가 필요한 증권사 연동을 제거하고, KOSPI·KOSDAQ 장중 참고 시세를 TradingView의 공식 임베드 위젯으로 분리합니다.
+v0.7.1은 KRX 지수의 외부 임베딩을 허용하지 않는 TradingView 위젯을 제거하고, KOSPI·KOSDAQ 장중 참고값을 앱의 자체 카드로 표시합니다.
 
 - 토스증권 OAuth·클라이언트 키·허용 IP 설정, 자동 수집, CLI 명령, 시장 랭킹·수급 화면을 모두 제거
 - 과거 SQLite DB에 증권사 시세가 남아 있어도 KOSPI·KOSDAQ·USD/KRW 후보로 선택하지 않음
-- 한국 탭에 `KRX:KOSPI`, `KRX:KOSDAQ` Single Ticker 위젯과 전체 차트 링크 추가
-- TradingView 값은 외부 장중 참고용으로만 표시하고 위기 점수·백테스트·원본 지표 계산에서는 완전히 제외
+- 한국 탭에 KOSPI·KOSDAQ 현재값, 등락폭, 등락률, 장 상태, 기준시각과 상세 차트 링크를 직접 표시
+- Npay 증권 공개 조회 응답을 30초마다 확인하고, 실패하면 KRX 최신 공식 EOD로 자동 대체
+- 외부 참고값은 저장하지 않고 위기 점수·백테스트·원본 지표 계산에서는 완전히 제외
 - 공식 계산 데이터는 KRX 일별값, FRED, ECOS와 기존 공식·공개 수집기로 유지
-- 외부 스크립트·시세 연결에 필요한 도메인만 Content Security Policy에 명시적으로 허용
+- 브라우저의 외부 스크립트·프레임·시세 연결 허용을 제거하고 same-origin Content Security Policy로 복구
 
 설계 근거와 데이터 경계는 [KOSPI·KOSDAQ 장중 참고 시세 검토](docs/KOSPI_KOSDAQ_REALTIME_DATA_RESEARCH.md)에 정리했습니다.
 
@@ -104,7 +105,7 @@ ECONOMICS_FULL_REFRESH_HOURS=6
 
 KRX Open API의 `KOSPI 시리즈 일별시세정보`, `KOSDAQ 시리즈 일별시세정보`는 **일별 데이터**입니다. v0.4.3은 더 이상 임의로 이틀 전까지만 조회하지 않고 **한국시간 기준 오늘 → 직전 영업일 순서로 가장 최근 공개된 행을 먼저 확인**합니다. 다만 KRX Open API가 장중 실시간 지수 틱을 제공하는 것은 아니므로, 장중에는 가장 최근 공개된 EOD 값이 표시될 수 있습니다.
 
-앱의 KOSPI·KOSDAQ 원본값과 위기 계산은 KRX 최신 검증 EOD만 사용합니다. 한국 탭 위쪽의 TradingView Single Ticker는 브라우저가 TradingView에 직접 연결해 보여 주는 별도 장중 참고 시세이며, 원본 DB·위기 점수·백테스트에는 저장하거나 사용하지 않습니다. 거래소·TradingView 정책에 따라 지연되거나 일시적으로 표시되지 않을 수 있습니다.
+앱의 KOSPI·KOSDAQ 원본값과 위기 계산은 KRX 최신 검증 EOD만 사용합니다. 한국 탭 위쪽의 장중 참고 카드는 앱 서버가 Npay 증권 공개 조회 응답에서 확인한 별도 시세이며, 원본 DB·위기 점수·백테스트에는 저장하거나 사용하지 않습니다. 외부 연결이 실패하면 카드 자체가 사라지지 않고 KRX 공식 최신 종가와 기준일을 표시합니다.
 
 ### FRED / ALFRED
 
@@ -112,7 +113,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.7.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.7.1-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -160,7 +161,7 @@ demo
 
 인자 없이 `EconomicsRadar.exe`를 실행하면 `launch`와 동일하게 로컬 서버를 시작하고 기본 브라우저를 엽니다. 기본 주소는 `http://127.0.0.1:8765`입니다.
 
-엔드포인트는 `/`, `/api/dashboard`, `/api/snapshot`, `/api/refresh-status`, `/api/refresh`, `/health`입니다.
+엔드포인트는 `/`, `/api/dashboard`, `/api/kr-indices-live`, `/api/snapshot`, `/api/refresh-status`, `/api/refresh`, `/health`입니다.
 
 ## 대시보드
 
@@ -171,7 +172,7 @@ demo
 
 상단 티커와 세부 표는 각 값의 실제 출처와 기준일을 보여 줍니다. 여러 후보 소스가 있는 지표는 단순히 첫 번째 소스를 고르지 않고 **실제로 더 최신인 관측치**를 선택합니다. 예를 들어 ECOS 원/달러가 오래되고 FRED DEXKOUS가 더 최신이면 최신 FRED 관측치를 사용합니다.
 
-한국 탭의 KOSPI·KOSDAQ 장중 참고 카드는 TradingView가 제공하는 외부 위젯입니다. 앱 내부의 KRX 지수 행과 날짜가 다를 수 있으며, 이 차이는 각각 장중 참고값과 공식 공개 EOD라는 데이터 성격 차이입니다. 외부 위젯은 키나 고정 IP가 필요 없지만 인터넷 연결이 필요합니다.
+한국 탭의 KOSPI·KOSDAQ 장중 참고 카드는 Npay 증권 공개 조회값을 숫자와 등락으로 직접 표시합니다. 앱 내부의 KRX 지수 행과 날짜가 다를 수 있으며, 이 차이는 각각 장중 참고값과 공식 공개 EOD라는 데이터 성격 차이입니다. 별도 키나 고정 IP는 필요 없지만 외부 참고값 갱신에는 인터넷 연결이 필요합니다.
 
 `최신 데이터 수집` 버튼은 전체 갱신을 즉시 요청합니다. 자동 갱신 중 오류가 일부 발생해도 성공한 최신값은 그대로 보존하며, 역사 데이터 오류와 현재값 오류를 가능한 한 분리합니다.
 
