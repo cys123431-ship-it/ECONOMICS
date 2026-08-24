@@ -39,6 +39,10 @@ struct MarketIndicatorPrice {
     symbol: String,
     timestamp: Option<String>,
     last_price: String,
+    #[serde(skip)]
+    timestamp_from_candle: bool,
+    #[serde(skip)]
+    timestamp_resolution_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -360,6 +364,72 @@ fn number(raw: &str, field: &str) -> Result<f64, String> {
     Ok(value)
 }
 
+fn market_indicator_interval(symbol: &str) -> &'static str {
+    match symbol {
+        "KOSPI" | "KOSDAQ" => "1m",
+        _ => "1d",
+    }
+}
+
+fn same_market_value(left: &str, right: &str) -> Result<bool, String> {
+    let left = number(left, "lastPrice")?;
+    let right = number(right, "candle.closePrice")?;
+    let tolerance = left.abs().max(right.abs()).max(1.0) * 1e-9;
+    Ok((left - right).abs() <= tolerance)
+}
+
+fn resolve_missing_price_timestamps(
+    http: &Client,
+    client_id: &str,
+    client_secret: &str,
+    prices: &mut [MarketIndicatorPrice],
+) {
+    for (fallback_index, price) in prices
+        .iter_mut()
+        .filter(|price| price.timestamp.is_none())
+        .enumerate()
+    {
+        if fallback_index > 0 {
+            thread::sleep(Duration::from_millis(225));
+        }
+        let path = format!("/api/v1/market-indicators/{}/candles", price.symbol);
+        let query = [
+            (
+                "interval",
+                market_indicator_interval(&price.symbol).to_string(),
+            ),
+            ("count", "1".to_string()),
+        ];
+        let resolved = authenticated_json(http, client_id, client_secret, &path, &query)
+            .and_then(|value| result_value(value, &path))
+            .and_then(|result| {
+                serde_json::from_value::<MarketCandlePage>(result)
+                    .map_err(|error| format!("{path}: invalid response: {error}"))
+            })
+            .and_then(|page| {
+                page.candles
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("{path}: response has no candle"))
+            })
+            .and_then(|candle| {
+                if !same_market_value(&price.last_price, &candle.close_price)? {
+                    return Err(format!(
+                        "{path}: latest candle close does not match lastPrice"
+                    ));
+                }
+                normalized_timestamp(&candle.timestamp)
+            });
+        match resolved {
+            Ok(timestamp) => {
+                price.timestamp = Some(timestamp);
+                price.timestamp_from_candle = true;
+            }
+            Err(error) => price.timestamp_resolution_error = Some(error),
+        }
+    }
+}
+
 fn record_result(report: &mut CollectionReport, result: Result<bool, String>, label: &str) {
     report.attempted += 1;
     match result {
@@ -424,9 +494,11 @@ fn store_prices(db: &Db, report: &mut CollectionReport, prices: &[MarketIndicato
         };
         let Some(timestamp) = price.timestamp.as_deref() else {
             report.attempted += 1;
-            report
-                .errors
-                .push(format!("toss {symbol}: source timestamp is missing"));
+            let detail = price
+                .timestamp_resolution_error
+                .as_deref()
+                .unwrap_or("source timestamp is missing and could not be resolved");
+            report.errors.push(format!("toss {symbol}: {detail}"));
             continue;
         };
         match number(&price.last_price, "lastPrice") {
@@ -438,7 +510,14 @@ fn store_prices(db: &Db, report: &mut CollectionReport, prices: &[MarketIndicato
                 timestamp,
                 value,
                 "/api/v1/market-indicators/prices",
-                json!({"symbol":symbol}),
+                json!({
+                    "symbol":symbol,
+                    "timestampSource":if price.timestamp_from_candle {
+                        "latestMatchingCandle"
+                    } else {
+                        "priceResponse"
+                    }
+                }),
             ),
             Ok(_) => {
                 report.attempted += 1;
@@ -845,7 +924,15 @@ pub fn collect_realtime(config: &Config, db: &Db) -> Result<CollectionReport, Bo
         &price_query,
     ) {
         Ok(value) => match serde_json::from_value::<MarketIndicatorResponse>(value) {
-            Ok(response) => store_prices(db, &mut report, &response.result),
+            Ok(mut response) => {
+                resolve_missing_price_timestamps(
+                    &http,
+                    client_id,
+                    client_secret,
+                    &mut response.result,
+                );
+                store_prices(db, &mut report, &response.result);
+            }
             Err(error) => report
                 .errors
                 .push(format!("toss market prices: invalid response: {error}")),
@@ -923,6 +1010,29 @@ mod tests {
         .unwrap();
         assert_eq!(response.result.len(), 2);
         assert_eq!(response.result[1].last_price, "3.25");
+    }
+
+    #[test]
+    fn official_nullable_market_timestamp_is_supported() {
+        let response: MarketIndicatorResponse = serde_json::from_value(json!({
+            "result":[{"symbol":"KOSPI","timestamp":null,"lastPrice":"2812.45"}]
+        }))
+        .unwrap();
+        assert!(response.result[0].timestamp.is_none());
+        assert!(!response.result[0].timestamp_from_candle);
+    }
+
+    #[test]
+    fn timestamp_fallback_uses_minute_candles_only_for_indices() {
+        assert_eq!(market_indicator_interval("KOSPI"), "1m");
+        assert_eq!(market_indicator_interval("KOSDAQ"), "1m");
+        assert_eq!(market_indicator_interval("KR_BOND_10Y"), "1d");
+    }
+
+    #[test]
+    fn timestamp_fallback_requires_matching_official_values() {
+        assert!(same_market_value("2812.450", "2812.45").unwrap());
+        assert!(!same_market_value("2812.45", "2812.46").unwrap());
     }
 
     #[test]

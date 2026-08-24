@@ -1,8 +1,18 @@
 # ECONOMICS Radar
 
-> v0.6.0: account-free Toss market intelligence across Korea and the U.S.
+> v0.6.1: production-safe Toss timestamps for indices and Korean bonds
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.6.1
+
+v0.6.1은 토스증권 운영 응답에서 시장지표 `timestamp`가 명세대로 `null`일 수 있는 경우를 안전하게 처리합니다.
+
+- 현재가의 원본 시각이 없을 때 같은 값의 최신 공식 캔들만 시간 근거로 사용
+- KOSPI·KOSDAQ은 최신 1분봉, 한국 국채 2·3·5·10·20·30년은 최신 일봉과 값이 일치할 때만 보완
+- 현재가와 캔들 종가가 다르면 시각을 추정하지 않고 오류로 남겨 잘못된 최신값 생성을 차단
+- 한국 국채 수익률을 장중 분봉이 아닌 일별 발표주기로 표시
+- 토스 원본 응답이 직접 제공한 시각과 캔들로 보완한 시각을 메타데이터에서 구분
 
 ## v0.6.0
 
@@ -133,7 +143,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.6.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.6.1-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env

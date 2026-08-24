@@ -1966,7 +1966,9 @@ fn cadence(selected: Option<SeriesRef>) -> &'static str {
         return "UNKNOWN";
     };
     if selected.source == "tossinvest"
-        && (selected.series.contains("_DAY_") || selected.series.contains("_NET_BUY_"))
+        && (selected.series.contains("_DAY_")
+            || selected.series.contains("_NET_BUY_")
+            || selected.series.starts_with("KR_BOND_"))
     {
         return "DAILY";
     }
@@ -2009,7 +2011,8 @@ fn freshness(
     };
     if let Some(selected) = selected.filter(|value| {
         value.source.eq_ignore_ascii_case("binance")
-            || value.source.eq_ignore_ascii_case("tossinvest") && !value.series.contains("_DAY_")
+            || value.source.eq_ignore_ascii_case("tossinvest")
+                && cadence(Some(*value)) == "INTRADAY"
     }) {
         if let Some(observed) = timestamp(&point.observed_at) {
             let age = Utc::now().signed_duration_since(observed).num_seconds();
@@ -2423,8 +2426,10 @@ mod tests {
             .unwrap();
         assert_eq!(bond.value, Some(3.251));
         assert_eq!(bond.unit, "percent");
+        assert_eq!(bond.cadence, "DAILY");
         assert_eq!(fx.value, Some(1_375.4));
         assert_eq!(fx.source.as_deref(), Some("TOSSINVEST"));
+        assert_eq!(fx.cadence, "INTRADAY");
         assert_eq!(spread.unit, "basis_points");
     }
 }

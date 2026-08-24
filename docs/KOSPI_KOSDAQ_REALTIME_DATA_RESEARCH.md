@@ -7,7 +7,7 @@
 
 이 앱은 토스증권 Open API를 KOSPI·KOSDAQ 장중 현재지수의 1순위 소스로 사용하고, 기존 KRX OPEN API 일별값을 자동 대체값으로 유지합니다.
 
-토스증권 공식 API는 `KOSPI,KOSDAQ`을 한 요청으로 조회하며 원본 `lastPrice`와 데이터 `timestamp`를 반환합니다. 시장 지표 조회는 계좌번호 없이 OAuth 토큰만 필요합니다. 토스 계좌 보유자는 WTS의 Open API 설정에서 클라이언트 키를 발급하고 이 노트북의 공인 IP를 허용 목록에 등록할 수 있습니다. 자세한 명세는 [토스증권 공식 Open API 안내](https://p.tossinvest.com/ko/open-api), [공식 OpenAPI 원문](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json), [공식 연동 안내](https://openapi.tossinvest.com/openapi-docs/overview.md)를 기준으로 했습니다.
+토스증권 공식 API는 `KOSPI,KOSDAQ`을 한 요청으로 조회하며 원본 `lastPrice`와 nullable 데이터 `timestamp`를 반환합니다. 운영 응답에서 `timestamp`가 null이면 같은 값의 최신 공식 1분봉 시각만 보완 근거로 사용하며, 값이 다르면 시각을 추정하지 않습니다. 시장 지표 조회는 계좌번호 없이 OAuth 토큰만 필요합니다. 토스 계좌 보유자는 WTS의 Open API 설정에서 클라이언트 키를 발급하고 이 노트북의 공인 IP를 허용 목록에 등록할 수 있습니다. 자세한 명세는 [토스증권 공식 Open API 안내](https://p.tossinvest.com/ko/open-api), [공식 OpenAPI 원문](https://openapi.tossinvest.com/openapi-docs/latest/openapi.json), [공식 연동 안내](https://openapi.tossinvest.com/openapi-docs/overview.md)를 기준으로 했습니다.
 
 ## 왜 기존 KRX 키만으로는 안 되는가
 
