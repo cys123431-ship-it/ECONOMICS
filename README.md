@@ -1,8 +1,22 @@
 # ECONOMICS Radar
 
-> v0.7.1: KRX/FRED/ECOS 공식 계산 + KOSPI·KOSDAQ 장중 참고 카드
+> v0.8.0: G3 중앙은행 유동성 검은선·롱/숏 방향성 터미널
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.8.0
+
+v0.8.0은 Fed·ECB·BOJ 총자산의 **규모보다 증감률과 속도**를 우선해서 보는 중앙은행 유동성 화면을 추가합니다.
+
+- `F5 중앙은행` 탭에 Fed·ECB·BOJ 원본 자산, 달러 환산 규모, YoY, 1개월 변화, 최근 3개월 연율, YoY 가속도 표시
+- 화면의 핵심 검은선은 현지통화 YoY를 현재 달러환산 자산규모로 가중한 `G3 FX중립 YoY`; 환율 효과를 포함한 `G3 USD환산 YoY`는 별도 비교
+- G3 YoY 수준 30%, 3개월 가속도 25%, 최근 3개월 연율 20%, Fed 순유동성 15%, 미국 지급준비금 10%로 `−100~+100` 방향성 점수 계산
+- 종합 탭에 `중앙은행 유동성 롱·숏` 패널을 추가하고 롱·숏 편향, 현재 레짐, 신뢰도, 검은선 수준·기울기를 함께 표시
+- Fed 총자산에서 미 재무부 TGA와 ON RRP를 차감한 보조 순유동성, 지급준비금과 각 항목의 정확한 원수치 표시
+- Fed·ECB·BOJ 발표주기 차이와 결측을 숨기지 않으며 가용 점수 가중치가 60% 미만이면 `DATA WAIT`
+- 자동 갱신에 `ECBASSETSW`, `JPNASSETS`, `WTREGEN`, `DEXUSEU`, `DEXJPUS`를 추가하고, 새 계열은 2019년부터 이력을 한 번 자동 보충
+
+점수는 수익률 확률이나 자동 매매 권고가 아닙니다. 산식·단위·해석 경계는 [중앙은행 유동성 모델](docs/CENTRAL_BANK_LIQUIDITY_MODEL.md)에 정리했습니다.
 
 ## v0.7.1
 
@@ -113,7 +127,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.7.1-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.8.0-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -169,6 +183,7 @@ demo
 - `F2 미국`
 - `F3 한국`
 - `F4 코인`
+- `F5 중앙은행`
 
 상단 티커와 세부 표는 각 값의 실제 출처와 기준일을 보여 줍니다. 여러 후보 소스가 있는 지표는 단순히 첫 번째 소스를 고르지 않고 **실제로 더 최신인 관측치**를 선택합니다. 예를 들어 ECOS 원/달러가 오래되고 FRED DEXKOUS가 더 최신이면 최신 FRED 관측치를 사용합니다.
 

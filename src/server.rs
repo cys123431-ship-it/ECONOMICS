@@ -289,6 +289,9 @@ mod tests {
         assert!(DASHBOARD_HTML.contains("data-tab=\"us\""));
         assert!(DASHBOARD_HTML.contains("data-tab=\"korea\""));
         assert!(DASHBOARD_HTML.contains("data-tab=\"crypto\""));
+        assert!(DASHBOARD_HTML.contains("data-tab=\"centralbank\""));
+        assert!(DASHBOARD_JS.contains("F5: 'centralbank'"));
+        assert!(DASHBOARD_JS.contains("renderCentralBank"));
         assert!(DASHBOARD_CSS.contains(".dial"));
     }
 
@@ -303,6 +306,7 @@ mod tests {
             "overviewGauges",
             "marketLights",
             "overviewQuotes",
+            "overviewCentralBank",
             "overviewRecovery",
             "overviewMarketMatrix",
             "riskHeatmap",
@@ -311,6 +315,13 @@ mod tests {
             "usMarket",
             "koreaMarket",
             "cryptoMarket",
+            "centralBankHero",
+            "centralBankChart",
+            "centralBankComponents",
+            "centralBankFactors",
+            "centralBankPlumbing",
+            "centralBankJudgement",
+            "centralBankMethodology",
         ] {
             assert!(
                 DASHBOARD_HTML.contains(&format!("id=\"{id}\"")),

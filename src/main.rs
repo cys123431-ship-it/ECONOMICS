@@ -1,3 +1,4 @@
+mod central_bank;
 mod collectors;
 mod config;
 mod dashboard;

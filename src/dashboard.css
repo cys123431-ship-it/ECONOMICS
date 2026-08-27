@@ -217,6 +217,83 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
 .crypto-regime.red { border-left-color: var(--red); }.crypto-regime.amber { border-left-color: var(--yellow); }.crypto-regime.green { border-left-color: var(--green); }
 .crypto-regime strong { color: var(--orange); }.crypto-regime p { margin: 6px 0; color: #bbb; }.crypto-regime small { color: var(--muted); }
 
+.central-bank-overview { min-height: 146px; display: grid; grid-template-columns: 220px minmax(360px, 1fr) 300px; background: #050505; }
+.central-bank-overview > div { min-width: 0; padding: 13px; border-right: 1px solid var(--line); }
+.central-bank-overview > div:last-child { border-right: 0; }
+.central-bank-overview-lead { display: flex; flex-direction: column; justify-content: center; border-left: 5px solid #555; }
+.central-bank-overview-lead.long { border-left-color: var(--green); }.central-bank-overview-lead.short { border-left-color: var(--red); }.central-bank-overview-lead.neutral { border-left-color: var(--yellow); }
+.central-bank-kicker { color: var(--cyan); font-size: 8px; font-weight: 900; letter-spacing: .08em; }
+.central-bank-overview-score { margin: 5px 0 2px; font-size: 31px; }
+.central-bank-signal { width: max-content; padding: 3px 5px; border: 1px solid currentColor; font-size: 9px; }
+.central-bank-signal.long { color: var(--green); }.central-bank-signal.short { color: var(--red); }.central-bank-signal.neutral { color: var(--yellow); }.central-bank-signal.unknown { color: var(--muted); }
+.central-bank-overview-lead small, .central-bank-bias > small { margin-top: 8px; color: var(--muted); font-size: 7px; }
+.central-bank-overview-summary h3 { margin: 0 0 6px; color: var(--orange); font-size: 13px; }
+.central-bank-overview-summary > p { margin: 0; color: #bbb; line-height: 1.55; font-size: 9px; }
+.central-bank-overview-metrics { margin-top: 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; }
+.central-bank-overview-metric { padding: 6px; border: 1px solid #282828; }
+.central-bank-overview-metric span, .central-bank-overview-metric strong, .central-bank-overview-metric small { display: block; }
+.central-bank-overview-metric span { color: var(--muted); font-size: 7px; }.central-bank-overview-metric strong { margin-top: 3px; color: var(--cyan); font-size: 12px; }.central-bank-overview-metric small { margin-top: 2px; color: #666; font-size: 7px; }
+.central-bank-bias { display: flex; flex-direction: column; justify-content: center; }
+.central-bank-bias-title, .central-bank-hero-bias > span { margin-bottom: 8px; color: var(--orange); font-size: 8px; font-weight: 900; }
+.central-bank-bias-row { margin-bottom: 8px; }
+.central-bank-bias-row > div:first-child { display: flex; justify-content: space-between; gap: 8px; font-size: 9px; }
+.central-bank-bias-row.long strong { color: var(--green); }.central-bank-bias-row.short strong { color: var(--red); }
+.central-bank-bias-track { height: 8px; margin-top: 4px; overflow: hidden; border: 1px solid #333; background: #151515; }
+.central-bank-bias-track i { display: block; width: var(--bias-width, 0%); height: 100%; }
+.central-bank-bias-row.long i { background: var(--green); }.central-bank-bias-row.short i { background: var(--red); }
+
+.central-bank-hero { min-height: 210px; margin-bottom: 8px; display: grid; grid-template-columns: 220px minmax(450px, 1fr) 300px; border: 1px solid var(--line); background: linear-gradient(120deg, #0d0d0d, #030303); }
+.central-bank-hero > div { min-width: 0; padding: 16px; border-right: 1px solid var(--line); }
+.central-bank-hero > div:last-child { border-right: 0; }
+.central-bank-score-block { display: flex; flex-direction: column; justify-content: center; border-left: 6px solid #555; }
+.central-bank-score-block.long { border-left-color: var(--green); }.central-bank-score-block.short { border-left-color: var(--red); }.central-bank-score-block.neutral { border-left-color: var(--yellow); }
+.central-bank-score-block > span { color: var(--cyan); font-size: 8px; }.central-bank-score-block > strong { margin: 7px 0 1px; font-size: 39px; }.central-bank-score-block > b { color: var(--orange); font-size: 12px; }.central-bank-score-block > small { margin-top: 10px; color: var(--muted); font-size: 7px; line-height: 1.5; }
+.central-bank-hero-copy h3 { margin: 7px 0; color: var(--orange); font-size: 16px; }.central-bank-hero-copy > p { margin: 0; color: #bbb; line-height: 1.65; font-size: 10px; }
+.central-bank-hero-metrics { margin-top: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.central-bank-hero-bias { display: flex; flex-direction: column; justify-content: center; }.central-bank-hero-bias > small { color: var(--muted); font-size: 8px; }
+.central-bank-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.central-bank-layout .wide-panel { grid-column: 1 / -1; }
+.central-bank-metric { min-width: 0; padding: 7px; border: 1px solid #292929; background: #050505; }
+.central-bank-metric span, .central-bank-metric strong, .central-bank-metric small { display: block; overflow-wrap: anywhere; }
+.central-bank-metric span { color: var(--muted); font-size: 8px; }.central-bank-metric strong { margin-top: 4px; color: #f0f0f0; font-size: 13px; }.central-bank-metric small { margin-top: 3px; color: #666; font-size: 7px; line-height: 1.4; }
+.central-bank-empty { margin: 0; padding: 18px; color: var(--muted); }
+
+.central-bank-chart { padding: 9px; }
+.central-bank-chart-wrap svg { width: 100%; min-width: 640px; height: 300px; display: block; background: #030303; border: 1px solid #252525; }
+.central-bank-gridline { stroke: #222; stroke-width: 1; }.central-bank-zero { stroke: #6a6a6a; stroke-width: 1.2; stroke-dasharray: 4 4; }
+.central-bank-axis-label { fill: #777; font-size: 10px; font-family: var(--mono); }
+.central-bank-series { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }.central-bank-series.series-g3 { stroke: #fff; stroke-width: 3.2; }.central-bank-series.series-fed { stroke: #bd6cff; }.central-bank-series.series-ecb { stroke: #ff4d57; }.central-bank-series.series-boj { stroke: #92d050; }.central-bank-series.series-usd { stroke: var(--cyan); stroke-dasharray: 6 4; }
+.central-bank-chart-legend { padding: 8px 4px 0; display: flex; flex-wrap: wrap; gap: 8px 18px; color: #aaa; font-size: 8px; }
+.central-bank-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }.central-bank-chart-legend i { width: 22px; height: 2px; background: currentColor; }.central-bank-chart-legend .series-g3 { color: #fff; }.central-bank-chart-legend .series-fed { color: #bd6cff; }.central-bank-chart-legend .series-ecb { color: #ff4d57; }.central-bank-chart-legend .series-boj { color: #92d050; }.central-bank-chart-legend .series-usd { color: var(--cyan); }
+.central-bank-chart-note { margin: 8px 4px 2px; color: var(--muted); font-size: 8px; line-height: 1.55; }
+
+.central-bank-components, .central-bank-factors { padding: 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.central-bank-factor { grid-column: span 1; }
+.central-bank-factor:nth-child(4), .central-bank-factor:nth-child(5) { grid-column: span 1; }
+.central-bank-component, .central-bank-factor { min-width: 0; padding: 11px; border: 1px solid #2d2d2d; background: #050505; }
+.central-bank-component header, .central-bank-factor header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.central-bank-component header span, .central-bank-factor header span { color: var(--cyan); font-size: 8px; }.central-bank-component h3, .central-bank-factor h3 { margin: 3px 0 0; color: var(--orange); font-size: 11px; }.central-bank-component header > b, .central-bank-factor header > b { color: var(--muted); font-size: 7px; text-align: right; }
+.central-bank-component-metrics { margin-top: 9px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.central-bank-interpretation { margin: 9px 0; padding: 7px; color: #c8c8c8; border-left: 3px solid var(--orange); background: #101010; line-height: 1.55; font-size: 8px; }
+.central-bank-meaning-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.central-bank-meaning { padding: 7px; border: 1px solid #282828; }.central-bank-meaning.increase { border-top-color: var(--green); }.central-bank-meaning.decrease { border-top-color: var(--red); }.central-bank-meaning strong { color: #ddd; font-size: 8px; }.central-bank-meaning p { margin: 4px 0 0; color: var(--muted); line-height: 1.5; font-size: 7px; }
+.central-bank-source { display: block; margin-top: 8px; color: #666; font-size: 7px; overflow-wrap: anywhere; }
+.central-bank-factor.long { border-top: 3px solid var(--green); }.central-bank-factor.short { border-top: 3px solid var(--red); }.central-bank-factor.neutral { border-top: 3px solid var(--yellow); }.central-bank-factor.unknown { border-top: 3px solid #444; }
+.central-bank-factor-track { position: relative; height: 7px; margin-top: 9px; border: 1px solid #333; background: linear-gradient(90deg, #431015 0 49.5%, #4a410f 49.5% 50.5%, #0c452d 50.5% 100%); }
+.central-bank-factor-track::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #ddd; }.central-bank-factor-track i { position: absolute; left: var(--factor-position, 50%); top: -4px; width: 5px; height: 13px; background: #fff; transform: translateX(-50%); box-shadow: 0 0 5px #fff; }
+.central-bank-factor-values { margin-top: 7px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+
+.central-bank-plumbing, .central-bank-judgement { padding: 11px; }
+.central-bank-formula { margin-bottom: 8px; padding: 9px; color: var(--cyan); border: 1px solid #24505b; background: #071317; font-weight: 900; text-align: center; }
+.central-bank-plumbing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.central-bank-plumbing-explanation { margin: 9px 0 0; color: #aaa; line-height: 1.6; font-size: 8px; }
+.central-bank-judgement-head { padding: 10px; display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; border-left: 4px solid #555; background: #0b0b0b; }.central-bank-judgement-head.long { border-color: var(--green); }.central-bank-judgement-head.short { border-color: var(--red); }.central-bank-judgement-head.neutral { border-color: var(--yellow); }.central-bank-judgement-head span { color: var(--orange); font-size: 10px; font-weight: 900; }.central-bank-judgement-head strong { grid-row: 1 / 3; grid-column: 2; align-self: center; font-size: 25px; }.central-bank-judgement-head small { color: #aaa; font-size: 8px; }
+.central-bank-judgement-summary { color: #bbb; line-height: 1.6; font-size: 8px; }
+.central-bank-driver-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }.central-bank-driver { padding: 8px; border: 1px solid #2c2c2c; }.central-bank-driver.long { border-top-color: var(--green); }.central-bank-driver.short { border-top-color: var(--red); }.central-bank-driver > strong { font-size: 8px; }.central-bank-driver ul { margin: 5px 0 0; padding-left: 16px; color: var(--muted); font-size: 7px; line-height: 1.5; }
+.central-bank-condition-grid { margin-top: 7px; display: grid; gap: 5px; }.central-bank-condition { padding: 7px; border-left: 3px solid #555; background: #0c0c0c; }.central-bank-condition.long { border-color: var(--green); }.central-bank-condition.short { border-color: var(--red); }.central-bank-condition.neutral { border-color: var(--yellow); }.central-bank-condition strong { font-size: 8px; }.central-bank-condition p { margin: 3px 0 0; color: var(--muted); line-height: 1.45; font-size: 7px; }
+.central-bank-warning { margin: 8px 0 0; padding: 7px; color: #d5c780; border: 1px solid #5d5118; background: #151204; font-size: 7px; line-height: 1.5; }
+.central-bank-methodology { padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }.central-bank-methodology section { padding: 10px; border: 1px solid #292929; background: #050505; }.central-bank-methodology h3 { margin: 0 0 7px; color: var(--orange); font-size: 10px; }.central-bank-methodology ol, .central-bank-methodology ul { margin: 0; padding-left: 19px; color: #aaa; line-height: 1.65; font-size: 8px; }.central-bank-caveats { border-top-color: var(--red) !important; }
+
 .kr-live-panel { margin-bottom: 8px; border-color: #2b4550; overflow: visible; }
 .kr-live-index-grid { padding: 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .kr-live-index-card { min-width: 0; min-height: 88px; padding: 10px 12px; border: 1px solid #2b2b2b; border-left: 4px solid var(--cyan); background: #050505; }
@@ -246,6 +323,9 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
   .overview-market-matrix { grid-template-columns: 1fr; }
   .indicator-table { min-width: 1180px; }
   .terminal-panel { overflow-x: auto; }
+  .central-bank-overview { grid-template-columns: 190px 1fr; }.central-bank-overview .central-bank-bias { grid-column: 1 / -1; border-top: 1px solid var(--line); border-right: 0; }
+  .central-bank-hero { grid-template-columns: 190px 1fr; }.central-bank-hero-bias { grid-column: 1 / -1; border-top: 1px solid var(--line); border-right: 0 !important; }
+  .central-bank-components, .central-bank-factors { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .command-bar { align-items: flex-start; }
@@ -265,4 +345,9 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
   .screen-title > div { display: block; }
   .asof { display: none; }
   .kr-live-index-grid { grid-template-columns: 1fr; }
+  .central-bank-overview, .central-bank-hero, .central-bank-layout { grid-template-columns: 1fr; }
+  .central-bank-overview > div, .central-bank-hero > div { border-right: 0; border-bottom: 1px solid var(--line); }
+  .central-bank-overview .central-bank-bias, .central-bank-hero-bias, .central-bank-layout .wide-panel { grid-column: auto; }
+  .central-bank-overview-metrics, .central-bank-hero-metrics, .central-bank-component-metrics, .central-bank-factor-values, .central-bank-components, .central-bank-factors, .central-bank-methodology { grid-template-columns: 1fr; }
+  .central-bank-meaning-grid, .central-bank-driver-grid, .central-bank-plumbing-grid { grid-template-columns: 1fr; }
 }

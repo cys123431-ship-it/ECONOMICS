@@ -48,6 +48,7 @@ const ids = Object.fromEntries([
   'overviewGauges',
   'marketLights',
   'overviewQuotes',
+  'overviewCentralBank',
   'overviewRecovery',
   'overviewMarketMatrix',
   'riskHeatmap',
@@ -56,19 +57,26 @@ const ids = Object.fromEntries([
   'usMarket',
   'koreaMarket',
   'cryptoMarket',
+  'centralBankHero',
+  'centralBankChart',
+  'centralBankComponents',
+  'centralBankFactors',
+  'centralBankPlumbing',
+  'centralBankJudgement',
+  'centralBankMethodology',
   'krLiveKospi',
   'krLiveKosdaq',
   'lastUpdated'
 ].map((id) => [id, new FakeElement('div', id)]));
 
-const tabNames = ['overview', 'us', 'korea', 'crypto'];
+const tabNames = ['overview', 'us', 'korea', 'crypto', 'centralbank'];
 const tabs = tabNames.map((name) => {
   const node = new FakeElement('button');
   node.dataset.tab = name;
   return node;
 });
 const panels = tabNames.map((name) => new FakeElement('section', `tab-${name}`));
-const asofs = [new FakeElement('span'), new FakeElement('span'), new FakeElement('span')];
+const asofs = [new FakeElement('span'), new FakeElement('span'), new FakeElement('span'), new FakeElement('span')];
 
 const document = {
   getElementById(id) {
@@ -162,7 +170,52 @@ const payload = {
     }
   },
   dashboard: {
-    indicators: []
+    indicators: [],
+    central_bank: {
+      score: 28,
+      long_bias: 64,
+      short_bias: 36,
+      confidence: 100,
+      signal: '롱 우세',
+      regime: '축소 중이나 완화 · 롱 방향 개선',
+      summary: 'G3 자산증가율 수준과 가속도, Fed 순유동성을 결합한 방향성입니다.',
+      as_of: '2026-08-01',
+      g3_total_usd_trillion: 19.2,
+      g3_yoy: -1.2,
+      g3_usd_yoy: 0.8,
+      g3_annualized_3m: 2.4,
+      g3_yoy_acceleration_3m: 1.1,
+      components: [{
+        key: 'fed', name: '미국 연방준비제도 총자산', series: 'WALCL',
+        source_series: 'fred:WALCL', native_unit: '백만 달러', native_value: 6600000,
+        usd_trillion: 6.6, yoy: -2.1, change_1m: 0.2, annualized_3m: 1.0,
+        yoy_acceleration_3m: 0.8, observed_at: '2026-08-19', freshness: '공식 최신 · 8일 시차',
+        increase_meaning: '달러 준비금 완충력이 늘어나는 방향입니다.',
+        decrease_meaning: '준비금 완충력이 줄어드는 방향입니다.',
+        interpretation: '전년보다 감소했지만 감소 속도는 완화됐습니다.'
+      }],
+      factors: [{
+        key: 'g3_yoy', label: 'G3 자산증가율 YoY · 검은선 수준', value: -1.2,
+        unit: '%', score: -12, weight: 30, contribution: -3.6,
+        source_series: 'fred:WALCL+ECBASSETSW+JPNASSETS', observed_at: '2026-08-01',
+        increase_meaning: '높아질수록 롱 성향이 강해집니다.',
+        decrease_meaning: '낮아질수록 숏 성향이 강해집니다.',
+        interpretation: '현재 수준은 축소 방향입니다.'
+      }],
+      fed_plumbing: {
+        net_liquidity_usd_trillion: 5.7, net_liquidity_yoy: 1.2,
+        net_liquidity_3m_annualized: 3.4, reserve_balances_usd_trillion: 3.1,
+        reserve_balances_3m_annualized: 2.3, reverse_repo_usd_trillion: 0.1,
+        treasury_general_account_usd_trillion: 0.8, observed_at: '2026-08-19',
+        formula: 'Fed 총자산 − 미 재무부 TGA − ON RRP', explanation: '시장 배관을 보는 보조치입니다.'
+      },
+      history: [
+        { observed_at: '2025-08-01', fed_yoy: -4, ecb_yoy: -5, boj_yoy: -1, g3_yoy: -3.8, g3_usd_yoy: -2 },
+        { observed_at: '2026-08-01', fed_yoy: -2.1, ecb_yoy: -1, boj_yoy: 0.2, g3_yoy: -1.2, g3_usd_yoy: 0.8 }
+      ],
+      methodology: ['공식 총자산 증가율을 가중합니다.'],
+      caveats: ['수익 확률이 아닙니다.']
+    }
   }
 };
 
@@ -176,7 +229,11 @@ for (const id of [
   'riskHeatmap',
   'usMarket',
   'koreaMarket',
-  'cryptoMarket'
+  'cryptoMarket',
+  'overviewCentralBank',
+  'centralBankHero',
+  'centralBankChart',
+  'centralBankJudgement'
 ]) {
   if (!ids[id].children.length) {
     throw new Error(`${id} rendered no children`);
@@ -188,6 +245,12 @@ const koreaPanel = panels.find((panel) => panel.id === 'tab-korea');
 const usPanel = panels.find((panel) => panel.id === 'tab-us');
 if (koreaPanel.hidden || !usPanel.hidden) {
   throw new Error('tab selection contract failed');
+}
+
+context.selectTab('centralbank');
+const centralBankPanel = panels.find((panel) => panel.id === 'tab-centralbank');
+if (centralBankPanel.hidden || !koreaPanel.hidden) {
+  throw new Error('central bank tab selection contract failed');
 }
 
 if (fs.readFileSync('src/dashboard.js', 'utf8').includes('NODE_LABELS')) {

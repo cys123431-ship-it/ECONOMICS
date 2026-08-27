@@ -1,4 +1,7 @@
-use crate::db::{Db, Point};
+use crate::{
+    central_bank::{self, CentralBankLiquidity},
+    db::{Db, Point},
+};
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::Serialize;
 
@@ -62,6 +65,7 @@ pub struct DashboardIndicator {
 #[derive(Clone, Debug, Serialize)]
 pub struct DashboardData {
     pub indicators: Vec<DashboardIndicator>,
+    pub central_bank: CentralBankLiquidity,
 }
 
 const fn series(source: &'static str, name: &'static str) -> SeriesRef {
@@ -1576,7 +1580,10 @@ pub fn build_at(db: &Db, as_of: Option<&str>) -> rusqlite::Result<DashboardData>
     for definition in INDICATORS {
         indicators.push(read_indicator(db, definition, as_of)?);
     }
-    Ok(DashboardData { indicators })
+    Ok(DashboardData {
+        indicators,
+        central_bank: central_bank::build(db, as_of)?,
+    })
 }
 
 fn timestamp(value: &str) -> Option<DateTime<Utc>> {

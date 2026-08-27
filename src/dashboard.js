@@ -168,7 +168,7 @@ const INDICATOR_RULES = {
 };
 
 const TICKER_KEYS = ['usdkrw', 'btc', 'sp500', 'nasdaq', 'dow', 'kospi', 'kosdaq'];
-const TAB_NAMES = ['overview', 'us', 'korea', 'crypto'];
+const TAB_NAMES = ['overview', 'us', 'korea', 'crypto', 'centralbank'];
 let workerWasRunning = false;
 let dashboardErrors = [];
 let collectionErrors = [];
@@ -301,6 +301,26 @@ function formatChange(indicator) {
     ? 'pp'
     : indicator.unit === 'points' ? 'p' : '';
   return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}${suffix}`;
+}
+
+function signed(value, digits = 2, suffix = '') {
+  const number = finite(value);
+  return number === null ? '—' : `${number >= 0 ? '+' : ''}${number.toFixed(digits)}${suffix}`;
+}
+
+function numberValue(value, digits = 0) {
+  const number = finite(value);
+  return number === null
+    ? '—'
+    : new Intl.NumberFormat('en-US', { maximumFractionDigits: digits }).format(number);
+}
+
+function centralBankState(value) {
+  const number = finite(value);
+  if (number === null) return { key: 'unknown', label: 'DATA WAIT' };
+  if (number >= 15) return { key: 'long', label: number >= 40 ? '강한 롱 우세' : '롱 우세' };
+  if (number <= -15) return { key: 'short', label: number <= -40 ? '강한 숏 우세' : '숏 우세' };
+  return { key: 'neutral', label: '중립·혼조' };
 }
 
 function krChangeClass(value) {
@@ -654,8 +674,63 @@ function renderOverview(payload, indicators) {
   renderRiskHeatmap(snapshot.nodes || {});
   renderProprietary(snapshot);
   renderSources(snapshot.sources || {});
+  renderOverviewCentralBank(payload.dashboard?.central_bank);
   renderOverviewRecovery(payload);
   renderOverviewMatrix(indicators);
+}
+
+function renderOverviewCentralBank(centralBank) {
+  const container = $('overviewCentralBank');
+  clear(container);
+  const state = centralBankState(centralBank?.score);
+  const lead = el('div', `central-bank-overview-lead ${state.key}`);
+  lead.append(
+    el('span', 'central-bank-kicker', 'CENTRAL BANK LIQUIDITY DIRECTION'),
+    el('strong', 'central-bank-overview-score', centralBank?.score == null ? '—' : signed(centralBank.score, 1)),
+    el('b', `central-bank-signal ${state.key}`, centralBank?.signal || state.label),
+    el('small', '', '−100 숏 압력 · 0 중립 · +100 롱 지원')
+  );
+
+  const summary = el('div', 'central-bank-overview-summary');
+  summary.append(
+    el('h3', '', centralBank?.regime || '중앙은행 데이터 대기'),
+    el('p', '', centralBank?.summary || 'Fed·ECB·BOJ 공식 자산과 환율 이력이 모이면 방향성 점수를 계산합니다.')
+  );
+  const metrics = el('div', 'central-bank-overview-metrics');
+  for (const [label, value, hint] of [
+    ['G3 FX중립 YoY', signed(centralBank?.g3_yoy, 2, '%'), '검은선 수준'],
+    ['3개월 가속도', signed(centralBank?.g3_yoy_acceleration_3m, 2, '%p'), '검은선 기울기'],
+    ['최근 3개월 연율', signed(centralBank?.g3_annualized_3m, 2, '%'), '빠른 흐름'],
+    ['계산 신뢰도', `${score(centralBank?.confidence)}%`, '가용 가중치']
+  ]) {
+    const card = el('div', 'central-bank-overview-metric');
+    card.append(el('span', '', label), el('strong', '', value), el('small', '', hint));
+    metrics.append(card);
+  }
+  summary.append(metrics);
+
+  const bias = el('div', 'central-bank-bias');
+  const longValue = clamp(centralBank?.long_bias);
+  const shortValue = clamp(centralBank?.short_bias);
+  bias.append(
+    el('span', 'central-bank-bias-title', 'DIRECTIONAL BIAS · 확률 아님'),
+    biasRow('LONG 지원', longValue, 'long'),
+    biasRow('SHORT 압력', shortValue, 'short'),
+    el('small', '', `기준일 ${centralBank?.as_of || '—'} · F5 중앙은행 탭에서 원수치와 산식을 확인`)
+  );
+  container.append(lead, summary, bias);
+}
+
+function biasRow(label, value, state) {
+  const row = el('div', `central-bank-bias-row ${state}`);
+  const heading = el('div');
+  heading.append(el('span', '', label), el('strong', '', `${value.toFixed(1)}`));
+  const bar = el('div', 'central-bank-bias-track');
+  const fill = el('i');
+  fill.style.setProperty('--bias-width', `${value}%`);
+  bar.append(fill);
+  row.append(heading, bar);
+  return row;
 }
 
 function renderOverviewRecovery(payload) {
@@ -1079,6 +1154,336 @@ function indicatorTable(keys, indicators) {
   return table;
 }
 
+function centralBankMetric(label, value, note, state = '') {
+  const card = el('div', `central-bank-metric ${state}`.trim());
+  card.append(el('span', '', label), el('strong', '', value), el('small', '', note));
+  return card;
+}
+
+function centralBankLineChart(history) {
+  const wrap = el('div', 'central-bank-chart-wrap');
+  const rows = Array.isArray(history) ? history : [];
+  const definitions = [
+    ['g3_yoy', 'G3 FX중립 · 검은선', 'series-g3'],
+    ['fed_yoy', 'Fed YoY', 'series-fed'],
+    ['ecb_yoy', 'ECB YoY', 'series-ecb'],
+    ['boj_yoy', 'BOJ YoY', 'series-boj'],
+    ['g3_usd_yoy', 'G3 USD환산 YoY', 'series-usd']
+  ];
+  const values = rows.flatMap((row) => definitions.map(([key]) => finite(row[key])).filter((value) => value !== null));
+  if (rows.length < 2 || values.length < 2) {
+    wrap.append(el('p', 'central-bank-empty', '최소 1년 이상의 Fed·ECB·BOJ 공식 이력이 수집되면 증가율 차트가 표시됩니다.'));
+    return wrap;
+  }
+
+  const width = 1000;
+  const height = 300;
+  const left = 62;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+  const minimum = Math.min(0, ...values);
+  const maximum = Math.max(0, ...values);
+  const padding = Math.max(2, (maximum - minimum) * 0.08);
+  const low = minimum - padding;
+  const high = maximum + padding;
+  const x = (index) => left + (index / Math.max(1, rows.length - 1)) * (width - left - right);
+  const y = (value) => top + ((high - value) / Math.max(0.001, high - low)) * (height - top - bottom);
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'G3 중앙은행 총자산 증가율 추이');
+
+  for (let index = 0; index <= 4; index += 1) {
+    const value = high - ((high - low) * index / 4);
+    const grid = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    grid.setAttribute('x1', left);
+    grid.setAttribute('x2', width - right);
+    grid.setAttribute('y1', y(value));
+    grid.setAttribute('y2', y(value));
+    grid.setAttribute('class', Math.abs(value) < (high - low) / 8 ? 'central-bank-zero' : 'central-bank-gridline');
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', left - 8);
+    label.setAttribute('y', y(value) + 4);
+    label.setAttribute('class', 'central-bank-axis-label');
+    label.setAttribute('text-anchor', 'end');
+    label.textContent = `${value.toFixed(1)}%`;
+    svg.append(grid, label);
+  }
+
+  const zero = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  zero.setAttribute('x1', left);
+  zero.setAttribute('x2', width - right);
+  zero.setAttribute('y1', y(0));
+  zero.setAttribute('y2', y(0));
+  zero.setAttribute('class', 'central-bank-zero');
+  svg.append(zero);
+
+  for (const [key, , className] of definitions) {
+    let drawing = false;
+    let pathData = '';
+    rows.forEach((row, index) => {
+      const value = finite(row[key]);
+      if (value === null) {
+        drawing = false;
+        return;
+      }
+      pathData += `${drawing ? ' L' : ' M'} ${x(index).toFixed(1)} ${y(value).toFixed(1)}`;
+      drawing = true;
+    });
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathData.trim());
+    path.setAttribute('class', `central-bank-series ${className}`);
+    svg.append(path);
+  }
+
+  for (const index of [0, Math.floor((rows.length - 1) / 2), rows.length - 1]) {
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', x(index));
+    label.setAttribute('y', height - 12);
+    label.setAttribute('class', 'central-bank-axis-label');
+    label.setAttribute('text-anchor', index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle');
+    label.textContent = String(rows[index]?.observed_at || '').slice(0, 7);
+    svg.append(label);
+  }
+
+  const legend = el('div', 'central-bank-chart-legend');
+  for (const [, label, className] of definitions) {
+    const item = el('span', className);
+    item.append(el('i'), document.createTextNode(label));
+    legend.append(item);
+  }
+  wrap.append(svg, legend, el('p', 'central-bank-chart-note', 'G3 FX중립선은 각 중앙은행의 현지통화 YoY를 현재 달러환산 자산규모로 가중합니다. USD환산선은 환율 효과까지 포함하므로 정책 방향 판단에는 FX중립선을 우선합니다.'));
+  return wrap;
+}
+
+function renderCentralBank(centralBank) {
+  const state = centralBankState(centralBank?.score);
+  const hero = $('centralBankHero');
+  clear(hero);
+  const scoreBlock = el('div', `central-bank-score-block ${state.key}`);
+  scoreBlock.append(
+    el('span', '', 'LIQUIDITY DIRECTION SCORE'),
+    el('strong', '', centralBank?.score == null ? '—' : signed(centralBank.score, 1)),
+    el('b', '', centralBank?.signal || state.label),
+    el('small', '', '−100 숏 압력 · +100 롱 지원 · 수익 확률 아님')
+  );
+  const heroCopy = el('div', 'central-bank-hero-copy');
+  heroCopy.append(
+    el('span', 'central-bank-kicker', 'G3 BALANCE SHEET / RATE OF CHANGE'),
+    el('h3', '', centralBank?.regime || '공식 데이터 수집 대기'),
+    el('p', '', centralBank?.summary || 'Fed·ECB·BOJ 공식 총자산 이력이 충분하지 않아 방향을 단정하지 않습니다.')
+  );
+  const heroMetrics = el('div', 'central-bank-hero-metrics');
+  for (const metric of [
+    centralBankMetric('G3 총자산', finite(centralBank?.g3_total_usd_trillion) === null ? '—' : `$${score(centralBank.g3_total_usd_trillion, 2)}T`, '현재 환율 환산 절대규모'),
+    centralBankMetric('G3 FX중립 YoY', signed(centralBank?.g3_yoy, 2, '%'), '검은선의 현재 높이'),
+    centralBankMetric('YoY 3개월 가속도', signed(centralBank?.g3_yoy_acceleration_3m, 2, '%p'), '검은선이 올라가는지'),
+    centralBankMetric('G3 최근 3개월 연율', signed(centralBank?.g3_annualized_3m, 2, '%'), '최근 자산 흐름'),
+    centralBankMetric('G3 USD환산 YoY', signed(centralBank?.g3_usd_yoy, 2, '%'), '환율 효과 포함'),
+    centralBankMetric('계산 신뢰도', finite(centralBank?.confidence) === null ? '—' : `${score(centralBank.confidence)}%`, '가용 가중치')
+  ]) heroMetrics.append(metric);
+  heroCopy.append(heroMetrics);
+  const heroBias = el('div', 'central-bank-hero-bias');
+  heroBias.append(
+    el('span', '', 'LONG / SHORT BIAS'),
+    biasRow('LONG 지원', clamp(centralBank?.long_bias), 'long'),
+    biasRow('SHORT 압력', clamp(centralBank?.short_bias), 'short'),
+    el('small', '', `종합 기준일 ${centralBank?.as_of || '—'}`)
+  );
+  hero.append(scoreBlock, heroCopy, heroBias);
+
+  const chart = $('centralBankChart');
+  clear(chart);
+  chart.append(centralBankLineChart(centralBank?.history));
+
+  const components = $('centralBankComponents');
+  clear(components);
+  const componentRows = Array.isArray(centralBank?.components) ? centralBank.components : [];
+  if (!componentRows.length) {
+    components.append(el('p', 'central-bank-empty', '중앙은행별 공식 데이터가 아직 없습니다.'));
+  }
+  for (const component of componentRows) {
+    const card = el('article', 'central-bank-component');
+    const header = el('header');
+    const title = el('div');
+    title.append(el('span', '', String(component.key || '').toUpperCase()), el('h3', '', component.name || component.series));
+    header.append(title, el('b', '', component.freshness || 'NO DATA'));
+    const raw = centralBankMetric(
+      `원본 ${component.series || ''}`,
+      numberValue(component.native_value, 1),
+      component.native_unit || '—'
+    );
+    const metricGrid = el('div', 'central-bank-component-metrics');
+    metricGrid.append(
+      raw,
+      centralBankMetric('달러 환산 자산', finite(component.usd_trillion) === null ? '—' : `$${score(component.usd_trillion, 3)}T`, '현재 환율 적용'),
+      centralBankMetric('전년비 YoY', signed(component.yoy, 2, '%'), '증가율 수준'),
+      centralBankMetric('1개월 변화', signed(component.change_1m, 2, '%'), '단기 변화'),
+      centralBankMetric('3개월 연율', signed(component.annualized_3m, 2, '%'), '최근 속도'),
+      centralBankMetric('YoY 가속도', signed(component.yoy_acceleration_3m, 2, '%p'), '3개월 전 YoY 대비')
+    );
+    const meanings = el('div', 'central-bank-meaning-grid');
+    meanings.append(
+      centralBankMeaning('증가할 때', component.increase_meaning, 'increase'),
+      centralBankMeaning('감소할 때', component.decrease_meaning, 'decrease')
+    );
+    card.append(
+      header,
+      metricGrid,
+      el('p', 'central-bank-interpretation', component.interpretation || '해석 데이터 없음'),
+      meanings,
+      el('small', 'central-bank-source', `${component.source_series || 'NO SOURCE'} · ${component.observed_at || '—'}`)
+    );
+    components.append(card);
+  }
+
+  const factors = $('centralBankFactors');
+  clear(factors);
+  const factorRows = Array.isArray(centralBank?.factors) ? centralBank.factors : [];
+  if (!factorRows.length) factors.append(el('p', 'central-bank-empty', '계산 가능한 점수 요인이 없습니다.'));
+  for (const factor of factorRows) {
+    const factorState = centralBankState(factor.score);
+    const card = el('article', `central-bank-factor ${factorState.key}`);
+    const heading = el('header');
+    const title = el('div');
+    title.append(el('span', '', String(factor.key || '').toUpperCase()), el('h3', '', factor.label || factor.key));
+    heading.append(title, el('b', '', `가중치 ${score(factor.weight, 0)}%`));
+    const scoreTrack = el('div', 'central-bank-factor-track');
+    const marker = el('i');
+    marker.style.setProperty('--factor-position', `${clamp((finite(factor.score) ?? 0) / 2 + 50)}%`);
+    scoreTrack.append(marker);
+    const row = el('div', 'central-bank-factor-values');
+    row.append(
+      centralBankMetric('현재 원수치', signed(factor.value, 2, factor.unit || ''), '공식·파생 관측'),
+      centralBankMetric('정규화 점수', signed(factor.score, 1), '−100 ~ +100'),
+      centralBankMetric('종합 기여도', signed(factor.contribution, 1), '가중치 적용')
+    );
+    const meanings = el('div', 'central-bank-meaning-grid');
+    meanings.append(
+      centralBankMeaning('값이 상승할 때', factor.increase_meaning, 'increase'),
+      centralBankMeaning('값이 하락할 때', factor.decrease_meaning, 'decrease')
+    );
+    card.append(
+      heading,
+      scoreTrack,
+      row,
+      el('p', 'central-bank-interpretation', factor.interpretation || '해석 데이터 없음'),
+      meanings,
+      el('small', 'central-bank-source', `${factor.source_series || 'NO SOURCE'} · ${factor.observed_at || '—'}`)
+    );
+    factors.append(card);
+  }
+
+  renderCentralBankPlumbing(centralBank?.fed_plumbing);
+  renderCentralBankJudgement(centralBank, factorRows);
+  renderCentralBankMethodology(centralBank);
+}
+
+function centralBankMeaning(label, text, state) {
+  const box = el('div', `central-bank-meaning ${state}`);
+  box.append(el('strong', '', label), el('p', '', text || '—'));
+  return box;
+}
+
+function renderCentralBankPlumbing(plumbing) {
+  const container = $('centralBankPlumbing');
+  clear(container);
+  if (!plumbing) {
+    container.append(el('p', 'central-bank-empty', 'Fed 자금시장 데이터가 아직 없습니다.'));
+    return;
+  }
+  container.append(
+    el('div', 'central-bank-formula', plumbing.formula || 'Fed 총자산 − TGA − ON RRP')
+  );
+  const grid = el('div', 'central-bank-plumbing-grid');
+  grid.append(
+    centralBankMetric('Fed 순유동성', finite(plumbing.net_liquidity_usd_trillion) === null ? '—' : `$${score(plumbing.net_liquidity_usd_trillion, 3)}T`, '총자산에서 TGA·ON RRP 차감'),
+    centralBankMetric('순유동성 YoY', signed(plumbing.net_liquidity_yoy, 2, '%'), '전년 대비'),
+    centralBankMetric('순유동성 3개월 연율', signed(plumbing.net_liquidity_3m_annualized, 2, '%'), '최근 방향'),
+    centralBankMetric('은행 지급준비금', finite(plumbing.reserve_balances_usd_trillion) === null ? '—' : `$${score(plumbing.reserve_balances_usd_trillion, 3)}T`, 'WRESBAL'),
+    centralBankMetric('준비금 3개월 연율', signed(plumbing.reserve_balances_3m_annualized, 2, '%'), '결제·레포 완충재'),
+    centralBankMetric('미 재무부 TGA', finite(plumbing.treasury_general_account_usd_trillion) === null ? '—' : `$${score(plumbing.treasury_general_account_usd_trillion, 3)}T`, '증가하면 은행 유동성 흡수'),
+    centralBankMetric('ON RRP', finite(plumbing.reverse_repo_usd_trillion) === null ? '—' : `$${score(plumbing.reverse_repo_usd_trillion, 3)}T`, '감소하면 민간시장으로 현금 이동')
+  );
+  container.append(
+    grid,
+    el('p', 'central-bank-plumbing-explanation', plumbing.explanation || ''),
+    el('small', 'central-bank-source', `Fed 공식 FRED 관측 · 공통 기준일 ${plumbing.observed_at || '—'}`)
+  );
+}
+
+function renderCentralBankJudgement(centralBank, factors) {
+  const container = $('centralBankJudgement');
+  clear(container);
+  const state = centralBankState(centralBank?.score);
+  const heading = el('div', `central-bank-judgement-head ${state.key}`);
+  heading.append(
+    el('span', '', centralBank?.signal || state.label),
+    el('strong', '', centralBank?.score == null ? '—' : signed(centralBank.score, 1)),
+    el('small', '', centralBank?.regime || '데이터 부족')
+  );
+  const available = factors.filter((factor) => finite(factor.score) !== null);
+  const supportive = [...available].sort((a, b) => Number(b.score) - Number(a.score)).filter((factor) => factor.score > 0).slice(0, 2);
+  const restrictive = [...available].sort((a, b) => Number(a.score) - Number(b.score)).filter((factor) => factor.score < 0).slice(0, 2);
+  const drivers = el('div', 'central-bank-driver-grid');
+  drivers.append(
+    centralBankDriver('롱 지원 요인', supportive, 'long'),
+    centralBankDriver('숏 압력 요인', restrictive, 'short')
+  );
+  const conditions = el('div', 'central-bank-condition-grid');
+  conditions.append(
+    centralBankCondition('롱 환경 강화', 'G3 YoY가 상승하고, 가속도·최근 3개월 흐름·Fed 순유동성·준비금이 함께 플러스로 정렬될 때 신뢰도가 높아집니다.', 'long'),
+    centralBankCondition('숏 환경 강화', 'G3 YoY가 하락하고, 검은선 기울기와 최근 흐름이 음수이며 Fed 순유동성·준비금까지 동시에 감소할 때 경계합니다.', 'short'),
+    centralBankCondition('혼조·판단 보류', '자산수준과 속도가 엇갈리거나 가용 가중치가 60% 미만이면 단독 진입 근거로 쓰지 않습니다.', 'neutral')
+  );
+  container.append(
+    heading,
+    el('p', 'central-bank-judgement-summary', centralBank?.summary || '종합판단에 필요한 데이터가 부족합니다.'),
+    drivers,
+    conditions,
+    el('p', 'central-bank-warning', '이 신호는 중앙은행 유동성의 방향을 요약하며 주가 수익률의 확률·목표가격·자동 매매 신호가 아닙니다. 시장 가격·신용·변동성 탭과 함께 확인하십시오.')
+  );
+}
+
+function centralBankDriver(title, factors, state) {
+  const box = el('div', `central-bank-driver ${state}`);
+  box.append(el('strong', '', title));
+  const list = el('ul');
+  if (!factors.length) list.append(el('li', '', '뚜렷한 요인 없음'));
+  for (const factor of factors) {
+    list.append(el('li', '', `${factor.label}: ${signed(factor.value, 2, factor.unit || '')} / 점수 ${signed(factor.score, 1)}`));
+  }
+  box.append(list);
+  return box;
+}
+
+function centralBankCondition(title, text, state) {
+  const box = el('div', `central-bank-condition ${state}`);
+  box.append(el('strong', '', title), el('p', '', text));
+  return box;
+}
+
+function renderCentralBankMethodology(centralBank) {
+  const container = $('centralBankMethodology');
+  clear(container);
+  const method = el('section');
+  method.append(el('h3', '', '계산 방법'));
+  const methodList = el('ol');
+  for (const item of centralBank?.methodology || ['공식 데이터가 수집되면 계산 방법을 표시합니다.']) {
+    methodList.append(el('li', '', item));
+  }
+  method.append(methodList);
+  const caveats = el('section', 'central-bank-caveats');
+  caveats.append(el('h3', '', '반드시 함께 볼 한계'));
+  const caveatList = el('ul');
+  for (const item of centralBank?.caveats || ['결측값은 임의로 채우지 않습니다.']) {
+    caveatList.append(el('li', '', item));
+  }
+  caveats.append(caveatList);
+  container.append(method, caveats);
+}
+
 function renderSafely(label, renderFn, errors) {
   try {
     renderFn();
@@ -1106,6 +1511,11 @@ function render(payload) {
       errors
     );
   }
+  renderSafely(
+    '중앙은행 탭',
+    () => renderCentralBank(payload.dashboard?.central_bank),
+    errors
+  );
   renderSafely(
     '결과 시각',
     () => {
@@ -1227,7 +1637,8 @@ document.addEventListener('keydown', (event) => {
     F1: 'overview',
     F2: 'us',
     F3: 'korea',
-    F4: 'crypto'
+    F4: 'crypto',
+    F5: 'centralbank'
   }[event.key];
   if (shortcut) {
     event.preventDefault();

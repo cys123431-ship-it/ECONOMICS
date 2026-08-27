@@ -33,8 +33,13 @@ const FRED_CURRENT_SERIES: &[&str] = &[
     "DGS2",
     "WALCL",
     "RRPONTSYD",
+    "WTREGEN",
     "TOTRESNS",
     "WRESBAL",
+    "ECBASSETSW",
+    "JPNASSETS",
+    "DEXUSEU",
+    "DEXJPUS",
     "DEXKOUS",
     "DTWEXBGS",
     "MORTGAGE30US",
@@ -216,7 +221,19 @@ struct RefreshOutcome {
 fn collect_current_fred(config: &Config, db: &Db, start: &str) -> collectors::CollectionReport {
     let mut report = collectors::CollectionReport::default();
     for series in FRED_CURRENT_SERIES {
-        match collectors::collect_fred(config, db, start, false, Some(series)) {
+        let minimum_history = match *series {
+            "JPNASSETS" => 15,
+            "WALCL" | "ECBASSETSW" | "WTREGEN" | "WRESBAL" => 60,
+            "DEXUSEU" | "DEXJPUS" | "RRPONTSYD" => 370,
+            _ => 0,
+        };
+        let needs_bootstrap = minimum_history > 0
+            && db
+                .recent("fred", series, minimum_history, None)
+                .map(|points| points.len() < minimum_history)
+                .unwrap_or(false);
+        let series_start = if needs_bootstrap { "2019-01-01" } else { start };
+        match collectors::collect_fred(config, db, series_start, false, Some(series)) {
             Ok(collected) => report.merge(collected),
             Err(error) => report.errors.push(format!("{series}: {error}")),
         }
