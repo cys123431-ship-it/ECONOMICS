@@ -179,13 +179,13 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
 .factor-bar i { display: block; height: 100%; background: var(--orange); }
 
 .recovery-overview { padding: 8px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
-.recovery-card { min-width: 0; padding: 10px; background: #050505; border: 1px solid #303030; }
+.recovery-card { min-width: 0; padding: 10px; background: #050505; border: 1px solid #303030; border-left: 4px solid var(--direction-color, #555); }
 .recovery-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .recovery-head strong { display: block; color: var(--orange); font-size: 11px; }
 .recovery-head small { display: block; margin-top: 4px; color: var(--muted); font-size: 8px; }
-.recovery-head b { color: var(--cyan); font-size: 22px; }
-.recovery-progress { height: 7px; margin-top: 8px; border: 1px solid #333; background: #151515; }
-.recovery-progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--red), var(--yellow) 55%, var(--green)); }
+.price-direction-result { min-width: 86px; text-align: right; }
+.price-direction-result b { display: block; color: var(--direction-color, var(--cyan)); font-size: 22px; }
+.price-direction-result small { display: block; margin-top: 3px; color: var(--muted); font-size: 7px; }
 .recovery-caption { margin: 5px 0 8px; color: #7b7b7b; font-size: 7px; }
 .recovery-condition-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
 .recovery-condition-grid.compact { grid-template-columns: 1fr; }
@@ -193,9 +193,9 @@ main { max-width: 1680px; margin: 0 auto; padding: 16px 18px 42px; }
 .recovery-condition span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 8px; }
 .recovery-condition strong { font-size: 10px; }
 .recovery-condition em { grid-column: 1 / -1; color: var(--muted); font-size: 7px; font-style: normal; }
-.recovery-condition.met { border-left-color: var(--green); }
-.recovery-condition.watch { border-left-color: var(--yellow); }
-.recovery-condition.blocked, .recovery-condition.critical { border-left-color: var(--red); }
+.recovery-condition.up { border-left-color: var(--green); }
+.recovery-condition.flat { border-left-color: var(--yellow); }
+.recovery-condition.down { border-left-color: var(--red); }
 .recovery-condition.unknown { border-left-color: #555; }
 .recovery-disclaimer { grid-column: 1 / -1; margin: 1px 2px 0; color: #8d8d8d; font-size: 8px; }
 .market-recovery-panel > .recovery-card { border: 0; }

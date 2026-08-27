@@ -124,6 +124,10 @@ vm.runInContext(
   { filename: 'dashboard.js' }
 );
 
+if (context.finite(null) !== null || context.finite(undefined) !== null || context.finite('') !== null) {
+  throw new Error('missing dashboard values must not be coerced to zero');
+}
+
 const payload = {
   snapshot: {
     as_of: '2026-08-21T07:00:00Z',
@@ -257,25 +261,32 @@ if (fs.readFileSync('src/dashboard.js', 'utf8').includes('NODE_LABELS')) {
   throw new Error('legacy NODE_LABELS reference remains');
 }
 
-const recoveryFixture = (risk) => ({
-  snapshot: {
-    global_risk: risk,
-    stress: risk,
-    vulnerability: risk,
-    resilience: 100 - risk,
-    markets: { US_EQUITY: risk, KOREA_EQUITY: risk, CRYPTO: risk },
-    nodes: {}
-  },
-  snapshot_history: {}
-});
-for (const [risk, expected] of [[75, 0], [55, 50], [35, 100], [90, 0], [20, 100]]) {
-  const model = context.recoveryModel('overall', recoveryFixture(risk));
-  if (model.progress !== expected) {
-    throw new Error(`recovery progress ${risk}: expected ${expected}, got ${model.progress}`);
-  }
+const directionIndicators = {
+  sp500: { change_pct: 0.60 },
+  nasdaq: { change_pct: 0.90 },
+  dow: { change_pct: -0.10 },
+  kospi: { change_pct: -0.40 },
+  kosdaq: { change_pct: -0.20 },
+  btc_spot_change: { value: 0.10 }
+};
+const usDirection = context.priceDirectionModel('us', directionIndicators);
+if (usDirection.state.label !== '상승' || Math.abs(usDirection.returnPct - (1.4 / 3)) > 1e-9) {
+  throw new Error(`US price direction mismatch: ${usDirection.state.label} ${usDirection.returnPct}`);
 }
-if (context.recoveryModel('us', { snapshot: { markets: {}, nodes: {} } }).progress !== null) {
-  throw new Error('insufficient recovery coverage must stay null');
+const koreaDirection = context.priceDirectionModel('korea', directionIndicators);
+if (koreaDirection.state.label !== '하락' || Math.abs(koreaDirection.returnPct + 0.3) > 1e-9) {
+  throw new Error(`Korea price direction mismatch: ${koreaDirection.state.label} ${koreaDirection.returnPct}`);
+}
+const cryptoDirection = context.priceDirectionModel('crypto', directionIndicators);
+if (cryptoDirection.state.label !== '횡보') {
+  throw new Error(`crypto sideways band mismatch: ${cryptoDirection.state.label}`);
+}
+const overallDirection = context.overallPriceDirection([usDirection, koreaDirection, cryptoDirection]);
+if (overallDirection.state.label !== '횡보') {
+  throw new Error(`overall tied direction must be sideways, got ${overallDirection.state.label}`);
+}
+if (context.priceDirectionModel('us', {}).state.label !== '데이터 부족') {
+  throw new Error('missing price direction data must remain unknown');
 }
 
 const html = fs.readFileSync('src/dashboard.html', 'utf8');
@@ -292,5 +303,15 @@ if (!fs.readFileSync('src/dashboard.js', 'utf8').includes("fetch('/api/kr-indice
 }
 if (!html.includes('위기 점수와 공식 지표 계산에는 사용하지 않음')) {
   throw new Error('external quote calculation boundary is not disclosed');
+}
+const dashboardJs = fs.readFileSync('src/dashboard.js', 'utf8');
+const ambiguousMarketLabels = ['탈출 준비', '회복 관찰', '위기 탈출 목표 접근도'];
+for (const phrase of ambiguousMarketLabels) {
+  if (dashboardJs.includes(phrase) || html.includes(phrase)) {
+    throw new Error(`ambiguous market label remains: ${phrase}`);
+  }
+}
+if (!html.includes('시장별 상승·하락·횡보')) {
+  throw new Error('explicit price-direction heading is missing');
 }
 console.log('dashboard smoke test passed');

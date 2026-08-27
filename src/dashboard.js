@@ -18,7 +18,7 @@ const NODE_META = {
   GROWTH: { label: '실물 성장', market: 'us' },
   LABOR: { label: '고용시장', market: 'us' },
   HOUSING: { label: '주택시장', market: 'us' },
-  KOREA_FIN_STAB: { label: '금융안정', market: 'korea' },
+  KOREA_FIN_STAB: { label: '한국 금융시스템 위험', market: 'korea' },
   KOREA_MARKET_INTERNALS: { label: '시장 내부수급', market: 'korea' },
   KOREA_MACRO: { label: '거시경제', market: 'korea' },
   CRYPTO_DERIVATIVES: { label: '파생시장', market: 'crypto' },
@@ -52,7 +52,7 @@ const FACTOR_LABEL_OVERRIDES = {
     USD: '달러·미국 금융환경'
   },
   korea: {
-    KOREA_FIN_STAB: '한국 금융안정',
+    KOREA_FIN_STAB: '한국 금융시스템 위험',
     KOREA_MARKET_INTERNALS: '한국 시장 내부수급',
     KOREA_MACRO: '한국 거시경제',
     USD: '달러·원화 외부요인',
@@ -123,48 +123,47 @@ const MARKET_CONFIG = {
   }
 };
 
-const RECOVERY_CONFIG = {
-  overall: {
-    title: '종합', riskKey: 'global_risk', prior: 'week',
-    conditions: [
-      ['stress', '시장 스트레스'], ['vulnerability', '구조적 취약성'],
-      ['resilience_risk', '회복탄력성 부족'], ['US_EQUITY', '미국 시장 위험'],
-      ['KOREA_EQUITY', '한국 시장 위험'], ['CRYPTO', '코인 시장 위험']
+const PRICE_DIRECTION_CONFIG = {
+  us: {
+    title: '미국', period: '최근 1거래일', sidewaysBand: 0.10,
+    components: [
+      ['sp500', 'S&P 500', 'change_pct'],
+      ['nasdaq', '나스닥 종합', 'change_pct'],
+      ['dow', '다우존스', 'change_pct']
     ]
   },
-  us: {
-    title: '미국', riskKey: 'US_EQUITY', prior: 'week',
-    conditions: [['VALUATION', '주식 가격·밸류에이션'], ['CREDIT', '신용시장'], ['VOLATILITY', '변동성'], ['FINCOND', '금융여건'], ['LEVERAGE', '레버리지']]
-  },
   korea: {
-    title: '한국', riskKey: 'KOREA_EQUITY', prior: 'week',
-    conditions: [['KOREA_FIN_STAB', '금융안정'], ['KOREA_MARKET_INTERNALS', '시장 내부수급'], ['KOREA_MACRO', '거시경제'], ['USD', '달러·원화 외부압력']]
+    title: '한국', period: '최근 공식 거래일', sidewaysBand: 0.10,
+    components: [
+      ['kospi', 'KOSPI', 'change_pct'],
+      ['kosdaq', 'KOSDAQ', 'change_pct']
+    ]
   },
   crypto: {
-    title: '코인', riskKey: 'CRYPTO', prior: 'day',
-    conditions: [['CRYPTO_DERIVATIVES', '코인 파생시장'], ['LIQUIDITY', '글로벌 유동성'], ['USD', '달러 압력']]
+    title: '코인', period: '최근 24시간', sidewaysBand: 0.25,
+    components: [['btc_spot_change', 'BTC 현물', 'value']]
   }
 };
 
 const INDICATOR_RULES = {
-  vix: [25, 35, '20 미만이면 공포 완화', true],
-  hy_spread: [4.5, 5, '4.5% 미만·5일 축소가 탈출 확인', true],
-  ig_spread: [1.2, 1.8, '하락 안정이 신용 정상화', true],
-  ofr_fsi: [0, 1, '0 미만 10거래일이 안정 조건', true],
-  stlfsi: [0, 1, '0 미만이면 장기평균보다 안정', true],
+  vix: [25, 35, '20 미만이면 기대 변동성이 낮은 구간', true],
+  hy_spread: [4.5, 5, '4.5% 미만·5일 축소이면 신용위험 하락', true],
+  ig_spread: [1.2, 1.8, '스프레드 하락은 투자등급 신용위험 감소', true],
+  ofr_fsi: [0, 1, '0 미만이면 장기평균보다 시장 스트레스가 낮음', true],
+  stlfsi: [0, 1, '0 미만이면 장기평균보다 금융 스트레스가 낮음', true],
   nfci: [0, 0.5, '0 미만이면 금융여건 완화', true],
   anfci: [0, 0.5, '0 미만이면 경제여건 대비 완화', true],
-  sahm: [0.5, 0.75, '0.50%p 미만이 침체신호 해제 조건', true],
-  kospi_breadth: [40, 25, '50% 이상 3일이 내부체력 회복', false],
-  kosdaq_breadth: [40, 25, '50% 이상 3일이 내부체력 회복', false],
+  sahm: [0.5, 0.75, '0.50%p 미만이면 침체 경보가 꺼진 구간', true],
+  kospi_breadth: [40, 25, '50% 이상이면 상승 종목이 하락 종목보다 많음', false],
+  kosdaq_breadth: [40, 25, '50% 이상이면 상승 종목이 하락 종목보다 많음', false],
   krx_breadth: [40, 25, '50% 이상이면 상승 확산', false],
-  etf_breadth: [40, 25, '50% 이상이면 ETF 위험선호 회복', false],
-  etn_breadth: [40, 25, '50% 이상이면 ETN 확산 회복', false],
-  krx_basis: [0, -5, '0p 이상 3일이면 선물 위험회피 완화', false],
-  krx_put_call: [1.2, 1.6, '중앙 범위 복귀가 옵션 공포 완화', true],
-  krx_option_iv: [45, 65, '최근 범위 60백분위 아래가 완화', true],
-  curve_10y2y: [0.25, 0, '+0.25%p 이상 지속 시 곡선 정상화', false],
-  curve_10y3m: [0.25, 0, '+0.25%p 이상 지속 시 곡선 정상화', false]
+  etf_breadth: [40, 25, '50% 이상이면 상승 ETF가 하락 ETF보다 많음', false],
+  etn_breadth: [40, 25, '50% 이상이면 상승 ETN이 하락 ETN보다 많음', false],
+  krx_basis: [0, -5, '0p 이상이면 선물이 현물보다 높은 구간', false],
+  krx_put_call: [1.2, 1.6, '비율 상승은 풋 거래 또는 포지션 비중 증가', true],
+  krx_option_iv: [45, 65, '최근 범위 60백분위 아래이면 옵션 변동성 위험 하락', true],
+  curve_10y2y: [0.25, 0, '+0.25%p 이상이면 10년 금리가 2년 금리보다 높음', false],
+  curve_10y3m: [0.25, 0, '+0.25%p 이상이면 10년 금리가 3개월 금리보다 높음', false]
 };
 
 const TICKER_KEYS = ['usdkrw', 'btc', 'sp500', 'nasdaq', 'dow', 'kospi', 'kosdaq'];
@@ -205,6 +204,7 @@ function updateErrorBanner() {
 }
 
 function finite(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -470,32 +470,32 @@ function riskState(value) {
   if (risk === null) {
     return {
       key: 'amber',
-      label: 'DATA WAIT',
+      label: '위험도 계산 불가',
       color: 'var(--yellow)',
-      message: '충분한 데이터가 아직 없습니다.'
+      message: '모델 위험점수를 계산할 데이터가 부족합니다. 가격 방향을 뜻하지 않습니다.'
     };
   }
   if (risk >= 65) {
     return {
       key: 'red',
-      label: '위험',
+      label: '위험 높음',
       color: 'var(--red)',
-      message: '복수 위험 신호가 강하게 켜져 있습니다.'
+      message: `모델 위험점수 ${risk.toFixed(1)}/100으로 높습니다. 이 점수는 가격 하락 확률이 아닙니다.`
     };
   }
   if (risk >= 45) {
     return {
       key: 'amber',
-      label: '주의',
+      label: '위험 중간',
       color: 'var(--yellow)',
-      message: '주의 구간입니다. 변동과 위험 요인을 함께 확인하세요.'
+      message: `모델 위험점수 ${risk.toFixed(1)}/100으로 중간입니다. 가격 방향은 별도 방향판을 보세요.`
     };
   }
   return {
     key: 'green',
-    label: '안정',
+    label: '위험 낮음',
     color: 'var(--green)',
-    message: '현재 종합 신호는 비교적 안정적입니다.'
+    message: `모델 위험점수 ${risk.toFixed(1)}/100으로 낮습니다. 이것은 가격 상승 신호가 아닙니다.`
   };
 }
 
@@ -529,13 +529,14 @@ function sparkline(values, className = 'sparkline') {
 }
 
 function gaugeCard(label, value, display, description, safeHigh = false) {
-  const state = riskState(safeHigh ? 100 - clamp(value) : value);
+  const numericValue = finite(value);
+  const state = riskState(numericValue === null ? null : safeHigh ? 100 - clamp(numericValue) : numericValue);
   const card = el('article', 'gauge-card');
   const dial = el('div', 'dial');
-  dial.style.setProperty('--value', clamp(value));
+  dial.style.setProperty('--value', numericValue === null ? 0 : clamp(numericValue));
   dial.style.setProperty('--gauge', state.color);
   const needle = el('span', 'needle');
-  needle.style.setProperty('--value', clamp(value));
+  needle.style.setProperty('--value', numericValue === null ? 0 : clamp(numericValue));
   const readout = el('div', 'dial-readout');
   readout.append(el('strong', '', display), el('small', '', '0  ·  50  ·  100'));
   dial.append(needle, readout);
@@ -575,7 +576,7 @@ function makeTrafficLight(state) {
   light.append(el('i'), el('i'), el('i'));
   light.setAttribute(
     'aria-label',
-    state === 'red' ? '위험' : state === 'amber' ? '주의' : '안정'
+    state === 'red' ? '위험 높음' : state === 'amber' ? '위험 중간' : '위험 낮음'
   );
   return light;
 }
@@ -593,7 +594,8 @@ function renderOverview(payload, indicators) {
   const fearScore = vix === null
     ? finite(snapshot.nodes?.VOLATILITY)
     : clamp((vix - 10) * 3.33);
-  const diffusionScore = clamp(Number(snapshot.diffusion || 0) * 12.5);
+  const diffusion = finite(snapshot.diffusion);
+  const diffusionScore = diffusion === null ? null : clamp(diffusion * 12.5);
   gauges.append(
     gaugeCard(
       'GLOBAL RISK',
@@ -610,7 +612,7 @@ function renderOverview(payload, indicators) {
     gaugeCard(
       '위험 전염도',
       diffusionScore,
-      `${snapshot.diffusion ?? 0}개`,
+      diffusion === null ? '—' : `${diffusion}개`,
       '고위험 신호가 여러 시장·모듈로 동시에 번지는 정도입니다.'
     ),
     gaugeCard(
@@ -675,7 +677,7 @@ function renderOverview(payload, indicators) {
   renderProprietary(snapshot);
   renderSources(snapshot.sources || {});
   renderOverviewCentralBank(payload.dashboard?.central_bank);
-  renderOverviewRecovery(payload);
+  renderOverviewDirection(indicators);
   renderOverviewMatrix(indicators);
 }
 
@@ -733,14 +735,17 @@ function biasRow(label, value, state) {
   return row;
 }
 
-function renderOverviewRecovery(payload) {
+function renderOverviewDirection(indicators) {
   const container = $('overviewRecovery');
   clear(container);
-  for (const name of ['overall', 'us', 'korea', 'crypto']) {
-    container.append(recoveryCard(recoveryModel(name, payload), true));
-  }
-  const note = el('p', 'recovery-disclaimer', '단일 시점 통과는 “탈출 확정”이 아닙니다. 종합·미국·한국은 7일, 코인은 24시간 전 저장 스냅샷과 비교하며 결측 조건은 통과로 세지 않습니다.');
-  container.append(note);
+  const markets = ['us', 'korea', 'crypto'].map((name) => priceDirectionModel(name, indicators));
+  container.append(priceDirectionCard(overallPriceDirection(markets), true));
+  for (const model of markets) container.append(priceDirectionCard(model, true));
+  container.append(el(
+    'p',
+    'recovery-disclaimer',
+    '상승·하락·횡보는 표시된 최근 가격 변화만 분류한 결과입니다. 상승확률·예측·매매 권고가 아니며, 모델 위험점수와 별개입니다.'
+  ));
 }
 
 function renderOverviewMatrix(indicators) {
@@ -826,7 +831,7 @@ function renderProprietary(snapshot) {
   const items = [
     ['시장 스트레스', snapshot.stress, '현재 충격·가격 압력의 강도'],
     ['구조적 취약성', snapshot.vulnerability, '충격을 증폭하는 부채·레버리지 기반'],
-    ['회복 탄력성', snapshot.resilience, '정책·유동성·완충 여력'],
+    ['충격 흡수력', snapshot.resilience, '정책·유동성·완충 여력'],
     ['위기 단계', snapshot.stage, '히스테리시스를 적용한 위기 단계'],
     ['데이터 품질', snapshot.data_quality, '추적 공식 소스의 신선도'],
     ['발동 신호 수', snapshot.rules_triggered, '내부 룰 엔진에서 현재 참인 신호 수']
@@ -873,78 +878,109 @@ function renderSources(sources) {
   }
 }
 
-function recoveryValue(snapshot, key) {
-  if (!snapshot) return null;
-  if (key === 'stress' || key === 'vulnerability') return finite(snapshot[key]);
-  if (key === 'resilience_risk') {
-    const resilience = finite(snapshot.resilience);
-    return resilience === null ? null : 100 - resilience;
-  }
-  if (Object.prototype.hasOwnProperty.call(snapshot.markets || {}, key)) {
-    return finite(snapshot.markets[key]);
-  }
-  return finite(snapshot.nodes?.[key]);
+function directionState(returnPct, sidewaysBand) {
+  const value = finite(returnPct);
+  if (value === null) return { key: 'unknown', label: '데이터 부족', color: '#777' };
+  if (value > sidewaysBand) return { key: 'up', label: '상승', color: 'var(--green)' };
+  if (value < -sidewaysBand) return { key: 'down', label: '하락', color: 'var(--red)' };
+  return { key: 'flat', label: '횡보', color: 'var(--yellow)' };
 }
 
-function recoveryRisk(snapshot, config) {
-  if (!snapshot) return null;
-  if (config.riskKey === 'global_risk') return finite(snapshot.global_risk);
-  return finite(snapshot.markets?.[config.riskKey]);
+function componentReturn(indicators, definition) {
+  const [key, label, field] = definition;
+  const indicator = indicators[key];
+  return {
+    key,
+    label,
+    returnPct: finite(indicator?.[field]),
+    observedAt: indicator?.observed_at || null
+  };
 }
 
-function recoveryModel(name, payload) {
-  const config = RECOVERY_CONFIG[name];
-  const current = payload.snapshot || {};
-  const prior = payload.snapshot_history?.[config.prior] || null;
-  const risk = recoveryRisk(current, config);
-  const priorRisk = recoveryRisk(prior, config);
-  const delta = risk === null || priorRisk === null ? null : risk - priorRisk;
-  const conditions = config.conditions.map(([key, label]) => {
-    const value = recoveryValue(current, key);
-    return {
-      key, label, value,
-      state: value === null ? 'unknown' : value >= 75 ? 'critical' : value >= 55 ? 'blocked' : value <= 35 ? 'met' : 'watch'
-    };
-  });
-  const known = conditions.filter((item) => item.value !== null).length;
-  const coverage = known / Math.max(conditions.length, 1);
-  const met = conditions.filter((item) => item.state === 'met').length;
-  const blocked = conditions.filter((item) => ['blocked', 'critical'].includes(item.state)).length;
-  const progress = risk === null || coverage < 0.6
-    ? null
-    : clamp((75 - risk) / 40 * 100);
-  let phase = '판단 데이터 부족';
-  if (risk !== null && coverage >= 0.6) {
-    phase = risk >= 75 ? '위기' : risk >= 55 ? '스트레스' : risk <= 35 ? '탈출 준비' : '회복 관찰';
-  }
-  const trend = delta === null
-    ? '추세 데이터 대기'
-    : delta <= -10 ? '빠르게 개선'
-      : delta <= -3 ? '개선'
-        : delta < 3 ? '정체'
-          : delta < 10 ? '악화' : '빠르게 악화';
-  return { name, config, risk, priorRisk, delta, conditions, known, coverage, met, blocked, progress, phase, trend };
+function priceDirectionModel(name, indicators) {
+  const config = PRICE_DIRECTION_CONFIG[name];
+  const components = config.components.map((definition) => componentReturn(indicators, definition));
+  const known = components.filter((item) => item.returnPct !== null);
+  const averageReturn = known.length
+    ? known.reduce((sum, item) => sum + item.returnPct, 0) / known.length
+    : null;
+  return {
+    name,
+    title: config.title,
+    period: config.period,
+    sidewaysBand: config.sidewaysBand,
+    returnPct: averageReturn,
+    state: directionState(averageReturn, config.sidewaysBand),
+    components,
+    known: known.length
+  };
 }
 
-function recoveryCard(model, compactMode = false) {
-  const card = el('article', `recovery-card phase-${model.phase.replaceAll(' ', '-')}`);
+function overallPriceDirection(markets) {
+  const known = markets.filter((market) => market.returnPct !== null);
+  const counts = { up: 0, down: 0, flat: 0 };
+  for (const market of known) counts[market.state.key] += 1;
+  let key = 'flat';
+  if (counts.up > counts.down && counts.up > counts.flat) key = 'up';
+  if (counts.down > counts.up && counts.down > counts.flat) key = 'down';
+  const state = known.length ? directionState(key === 'up' ? 1 : key === 'down' ? -1 : 0, 0.5) : directionState(null, 0);
+  return {
+    name: 'overall',
+    title: '전체 시장',
+    period: '미국·한국·코인 최신 가격',
+    sidewaysBand: null,
+    returnPct: null,
+    state,
+    components: markets.map((market) => ({
+      key: market.name,
+      label: market.title,
+      returnPct: market.returnPct,
+      directionLabel: market.state.label,
+      directionKey: market.state.key
+    })),
+    known: known.length,
+    counts
+  };
+}
+
+function signedPercent(value) {
+  const number = finite(value);
+  return number === null ? '—' : `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
+}
+
+function priceDirectionCard(model, compactMode = false) {
+  const card = el('article', `recovery-card direction-${model.state.key}`);
+  card.style.setProperty('--direction-color', model.state.color);
   const head = el('div', 'recovery-head');
   const title = el('div');
-  title.append(el('strong', '', `${model.config.title} · ${model.phase}`), el('small', '', `${model.trend} / 데이터 ${model.known}/${model.conditions.length}`));
-  head.append(title, el('b', '', model.progress === null ? '—' : `${model.progress.toFixed(0)}%`));
+  title.append(
+    el('strong', '', `${model.title} 가격 방향`),
+    el('small', '', `${model.period} · 데이터 ${model.known}/${model.components.length}`)
+  );
+  const result = el('div', `price-direction-result ${model.state.key}`);
+  result.append(
+    el('b', '', model.state.label),
+    el('small', '', model.name === 'overall' ? '시장 수 기준' : `대표가격 평균 ${signedPercent(model.returnPct)}`)
+  );
+  head.append(title, result);
   card.append(head);
-  const bar = el('div', 'recovery-progress');
-  const fill = el('i');
-  fill.style.width = `${model.progress ?? 0}%`;
-  bar.append(fill);
-  card.append(bar, el('p', 'recovery-caption', '위기 탈출 목표 접근도 · 모델 위험점수 35 이하 목표'));
+  card.append(el(
+    'p',
+    'recovery-caption',
+    model.name === 'overall'
+      ? `상승 ${model.counts?.up || 0} · 하락 ${model.counts?.down || 0} · 횡보 ${model.counts?.flat || 0}`
+      : `횡보 기준 ±${model.sidewaysBand.toFixed(2)}% · 가격 변화의 방향만 표시`
+  ));
   const list = el('div', compactMode ? 'recovery-condition-grid compact' : 'recovery-condition-grid');
-  for (const condition of model.conditions) {
-    const row = el('div', `recovery-condition ${condition.state}`);
+  for (const component of model.components) {
+    const state = component.directionKey
+      ? { key: component.directionKey, label: component.directionLabel }
+      : directionState(component.returnPct, model.sidewaysBand ?? 0);
+    const row = el('div', `recovery-condition ${state.key}`);
     row.append(
-      el('span', '', condition.label),
-      el('strong', '', condition.value === null ? '—' : condition.value.toFixed(1)),
-      el('em', '', condition.state === 'met' ? '≤35 통과' : condition.state === 'critical' ? '≥75 핵심차단' : condition.state === 'blocked' ? '≥55 차단' : condition.state === 'watch' ? '관찰' : '결측')
+      el('span', '', component.label),
+      el('strong', '', signedPercent(component.returnPct)),
+      el('em', '', state.label)
     );
     list.append(row);
   }
@@ -966,7 +1002,7 @@ function renderMarket(config, payload, indicators) {
   );
 
   const summary = el('div', 'market-summary');
-  summary.append(el('h3', '', `${config.title} 상황판 · ${state.label}`));
+  summary.append(el('h3', '', `${config.title} 모델 위험도 · ${state.label}`));
   summary.append(el('p', '', buildMarketSummary(config, snapshot, indicators, state)));
   const topFactors = config.factors
     .map((name) => [name, finite(snapshot.nodes?.[name])])
@@ -984,14 +1020,14 @@ function renderMarket(config, payload, indicators) {
   hero.append(gauge, summary, lightArea);
   container.append(hero);
 
-  const recoveryPanel = el('section', 'terminal-panel market-recovery-panel');
-  const recoveryHeading = el('div', 'panel-heading');
-  recoveryHeading.append(el('span', '', 'CRISIS EXIT GATES'), el('strong', '', `${config.title} 위기 탈출 조건`));
-  const recoveryName = config.riskKey === 'US_EQUITY' ? 'us' : config.riskKey === 'KOREA_EQUITY' ? 'korea' : 'crypto';
-  recoveryPanel.append(recoveryHeading, recoveryCard(recoveryModel(recoveryName, payload)));
-  container.append(recoveryPanel);
+  const directionPanel = el('section', 'terminal-panel market-recovery-panel');
+  const directionHeading = el('div', 'panel-heading');
+  directionHeading.append(el('span', '', 'PRICE DIRECTION'), el('strong', '', `${config.title} 상승·하락·횡보`));
+  const directionName = config.riskKey === 'US_EQUITY' ? 'us' : config.riskKey === 'KOREA_EQUITY' ? 'korea' : 'crypto';
+  directionPanel.append(directionHeading, priceDirectionCard(priceDirectionModel(directionName, indicators)));
+  container.append(directionPanel);
 
-  if (recoveryName === 'crypto') {
+  if (directionName === 'crypto') {
     container.append(renderCryptoRegime(indicators));
   }
 
@@ -1055,7 +1091,7 @@ function renderCryptoRegime(indicators) {
       state = 'red';
     } else if (priceDelta < 0 && oiDelta < 0) {
       title = '가격↓ + OI↓ · 디레버리징';
-      body = '포지션 청산이 진행 중입니다. OI 급감이 멈추고 현물가격이 안정되는지 확인해야 합니다.';
+      body = '가격과 미결제약정이 함께 하락 중입니다. OI 감소가 멈추는지와 현물가격이 상승·하락·횡보 중 무엇으로 바뀌는지 확인하세요.';
       state = 'amber';
     } else {
       title = '가격↑ + OI↓ · 숏커버 가능성';
