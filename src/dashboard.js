@@ -943,9 +943,9 @@ function overallPriceDirection(markets) {
   };
 }
 
-function signedPercent(value) {
+function signedPercent(value, digits = 2) {
   const number = finite(value);
-  return number === null ? '—' : `${number > 0 ? '+' : ''}${number.toFixed(2)}%`;
+  return number === null ? '—' : `${number > 0 ? '+' : ''}${number.toFixed(digits)}%`;
 }
 
 function priceDirectionCard(model, compactMode = false) {
@@ -960,7 +960,7 @@ function priceDirectionCard(model, compactMode = false) {
   const result = el('div', `price-direction-result ${model.state.key}`);
   result.append(
     el('b', '', model.state.label),
-    el('small', '', model.name === 'overall' ? '시장 수 기준' : `대표가격 평균 ${signedPercent(model.returnPct)}`)
+    el('small', '', model.name === 'overall' ? '시장 수 기준' : `대표가격 평균 ${signedPercent(model.returnPct, 3)}`)
   );
   head.append(title, result);
   card.append(head);
