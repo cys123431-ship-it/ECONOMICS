@@ -1,8 +1,12 @@
 # ECONOMICS Radar
 
-> v0.9.2: 검색·예외감시·자금·포지션·검증형 확률예측을 결합한 시장 의사결정 터미널
+> v0.9.3: 검색·예외감시·자금·포지션·검증형 확률예측을 결합한 시장 의사결정 터미널
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.9.3
+
+장기 KRX 지수 보충 중 이미 저장한 날짜는 다시 요청하지 않고, 일시적인 403 응답은 지수 데이터가 먼저 정상 수신된 경우 제한적으로 재시도합니다. 요청 사이에 짧은 간격을 두어 대량 보충이 서비스 제한에 걸릴 가능성도 낮췄습니다.
 
 ## v0.9.2
 
@@ -159,7 +163,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.9.2-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.9.3-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env

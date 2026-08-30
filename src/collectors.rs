@@ -10,7 +10,14 @@ use chrono::{
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, error::Error, fs, io::Cursor, thread, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error,
+    fs,
+    io::Cursor,
+    thread,
+    time::Duration,
+};
 
 type AuctionValues = (f64, Option<f64>, Option<f64>, Option<f64>);
 
@@ -1748,6 +1755,8 @@ struct KrxService {
 const KRX_INCREMENTAL_OVERLAP_DAYS: i64 = 7;
 const KRX_FORECAST_HISTORY_SERIES: &[&str] = &["KRX_KOSPI_CLOSE", "KRX_KOSDAQ_CLOSE"];
 const KRX_FORECAST_LOOKBACK_DAYS: usize = 1_825;
+const KRX_FORECAST_MIN_POINTS: usize = 700;
+const KRX_REQUEST_DELAY_MILLIS: u64 = 75;
 
 const KRX_SERVICES: &[KrxService] = &[
     KrxService {
@@ -2029,18 +2038,26 @@ fn krx_query_dates(
         initial_lookback_days
     };
     let history_floor = today - ChronoDuration::days(target_lookback_days as i64);
+    let mut existing_dates = BTreeSet::new();
     let forecast_history_missing = if forecast_series {
-        let oldest = db
-            .recent(
-                "krx",
-                primary_series,
-                target_lookback_days.saturating_add(366),
-                None,
-            )?
+        let history = db.recent(
+            "krx",
+            primary_series,
+            target_lookback_days.saturating_add(366),
+            None,
+        )?;
+        existing_dates.extend(history.iter().filter_map(|point| {
+            point
+                .observed_at
+                .get(..10)
+                .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        }));
+        let oldest = history
             .first()
             .and_then(|point| point.observed_at.get(..10))
             .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
-        oldest.is_none_or(|date| date > history_floor + ChronoDuration::days(14))
+        history.len() < KRX_FORECAST_MIN_POINTS
+            || oldest.is_none_or(|date| date > history_floor + ChronoDuration::days(14))
     } else {
         false
     };
@@ -2055,9 +2072,13 @@ fn krx_query_dates(
     if span < 0 {
         return Ok(Vec::new());
     }
+    let overlap_start = end - ChronoDuration::days(KRX_INCREMENTAL_OVERLAP_DAYS);
     Ok((0..=span)
         .map(|offset| start + ChronoDuration::days(offset))
         .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
+        .filter(|date| {
+            !forecast_history_missing || *date >= overlap_start || !existing_dates.contains(date)
+        })
         .collect())
 }
 
@@ -2090,14 +2111,29 @@ pub fn collect_krx(
         )?;
         let mut recognized = 0usize;
         for date in &dates {
-            let response = match http
-                .get(format!(
-                    "https://data-dbg.krx.co.kr/svc/apis/{}",
-                    service.path
-                ))
-                .header("AUTH_KEY", key)
-                .query(&[("basDd", date.format("%Y%m%d").to_string())])
-                .send()
+            let mut response_result = None;
+            for attempt in 0..3_u64 {
+                let result = http
+                    .get(format!(
+                        "https://data-dbg.krx.co.kr/svc/apis/{}",
+                        service.path
+                    ))
+                    .header("AUTH_KEY", key)
+                    .query(&[("basDd", date.format("%Y%m%d").to_string())])
+                    .send();
+                if result
+                    .as_ref()
+                    .is_ok_and(|response| response.status().as_u16() == 403)
+                    && recognized > 0
+                    && attempt < 2
+                {
+                    thread::sleep(Duration::from_secs(2_u64.pow(attempt as u32)));
+                    continue;
+                }
+                response_result = Some(result);
+                break;
+            }
+            let response = match response_result.expect("KRX request loop always produces a result")
             {
                 Ok(response) => response,
                 Err(error) => {
@@ -2105,13 +2141,14 @@ pub fn collect_krx(
                     break;
                 }
             };
+            thread::sleep(Duration::from_millis(KRX_REQUEST_DELAY_MILLIS));
             let status = response.status();
             if status.as_u16() == 401 || status.as_u16() == 403 {
                 report.error(
                     service.api_id,
                     format!(
-                        "KRX service not authorized; apply for '{}' in KRX Open API (HTTP {})",
-                        service.name, status
+                        "KRX service access denied or temporarily throttled for '{}' after {} recognized row(s) (HTTP {})",
+                        service.name, recognized, status
                     ),
                 );
                 break;
@@ -3096,14 +3133,17 @@ mod tests {
         let db = Db::open(&temporary.path().join("krx.db")).unwrap();
         let mut report = CollectionReport::default();
         let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
-        store_krx_value(
-            &db,
-            &mut report,
-            "KRX_KOSPI_CLOSE",
-            today - ChronoDuration::days(KRX_FORECAST_LOOKBACK_DAYS as i64),
-            2600.0,
-            Value::Null,
-        );
+        let history_floor = today - ChronoDuration::days(KRX_FORECAST_LOOKBACK_DAYS as i64);
+        for offset in 0..KRX_FORECAST_MIN_POINTS {
+            store_krx_value(
+                &db,
+                &mut report,
+                "KRX_KOSPI_CLOSE",
+                history_floor + ChronoDuration::days((offset * 2) as i64),
+                2600.0 + offset as f64,
+                Value::Null,
+            );
+        }
         let latest = NaiveDate::from_ymd_opt(2026, 8, 18).unwrap();
         store_krx_value(
             &db,
@@ -3119,6 +3159,26 @@ mod tests {
             Some(NaiveDate::from_ymd_opt(2026, 8, 11).unwrap())
         );
         assert_eq!(dates.last().copied(), Some(today));
+    }
+
+    #[test]
+    fn krx_forecast_backfill_skips_dates_already_stored() {
+        let temporary = tempfile::tempdir().unwrap();
+        let db = Db::open(&temporary.path().join("krx.db")).unwrap();
+        let mut report = CollectionReport::default();
+        let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let stored_date = NaiveDate::from_ymd_opt(2024, 8, 20).unwrap();
+        store_krx_value(
+            &db,
+            &mut report,
+            "KRX_KOSPI_CLOSE",
+            stored_date,
+            2800.0,
+            Value::Null,
+        );
+        let dates = krx_query_dates(&db, "KRX_KOSPI_CLOSE", today, 365, KrxHistory::Full).unwrap();
+        assert!(!dates.contains(&stored_date));
+        assert!(dates.contains(&today));
     }
 
     #[test]
