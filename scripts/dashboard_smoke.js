@@ -3,6 +3,7 @@ const vm = require('vm');
 
 class FakeClassList {
   add() {}
+  remove() {}
   toggle() {}
 }
 
@@ -36,12 +37,23 @@ class FakeElement {
   }
 
   addEventListener() {}
+  querySelector() { return null; }
+  querySelectorAll() { return []; }
+  closest() { return null; }
+  focus() {}
+  blur() {}
+  select() {}
+  scrollIntoView() {}
 }
 
 const ids = Object.fromEntries([
   'connectionDot',
   'connectionText',
   'refreshButton',
+  'terminalSearch',
+  'scopeButton',
+  'densityButton',
+  'searchResults',
   'tickerTape',
   'errorBanner',
   'overviewAsOf',
@@ -54,9 +66,13 @@ const ids = Object.fromEntries([
   'riskHeatmap',
   'proprietarySignals',
   'sourceHealth',
+  'priorityMonitor',
+  'favoritesMonitor',
+  'forecastOverview',
   'usMarket',
   'koreaMarket',
   'cryptoMarket',
+  'fundingMarket',
   'centralBankHero',
   'centralBankChart',
   'centralBankComponents',
@@ -69,7 +85,7 @@ const ids = Object.fromEntries([
   'lastUpdated'
 ].map((id) => [id, new FakeElement('div', id)]));
 
-const tabNames = ['overview', 'us', 'korea', 'crypto', 'centralbank'];
+const tabNames = ['overview', 'us', 'korea', 'crypto', 'centralbank', 'funding'];
 const tabs = tabNames.map((name) => {
   const node = new FakeElement('button');
   node.dataset.tab = name;
@@ -79,6 +95,8 @@ const panels = tabNames.map((name) => new FakeElement('section', `tab-${name}`))
 const asofs = [new FakeElement('span'), new FakeElement('span'), new FakeElement('span'), new FakeElement('span')];
 
 const document = {
+  body: new FakeElement('body'),
+  activeElement: null,
   getElementById(id) {
     return ids[id] || panels.find((panel) => panel.id === id) || null;
   },
@@ -97,14 +115,26 @@ const document = {
     if (selector === '.market-asof') return asofs;
     return [];
   },
+  querySelector(selector) {
+    if (selector === '.market-tabs') return new FakeElement('nav');
+    return null;
+  },
   addEventListener() {}
+};
+
+const localStorageValues = new Map();
+const localStorage = {
+  getItem(key) { return localStorageValues.has(key) ? localStorageValues.get(key) : null; },
+  setItem(key, value) { localStorageValues.set(key, String(value)); }
 };
 
 const context = {
   console,
   document,
+  localStorage,
   fetch: () => new Promise(() => {}),
   setInterval: () => 0,
+  setTimeout: () => 0,
   Intl,
   Date,
   Number,
@@ -219,7 +249,22 @@ const payload = {
       ],
       methodology: ['공식 총자산 증가율을 가중합니다.'],
       caveats: ['수익 확률이 아닙니다.']
-    }
+    },
+    forecasts: [{
+      market: 'us', label: '미국 S&P 500', source_series: 'fred:SP500',
+      as_of: '2026-08-28', status: 'EXPERIMENTAL / WALK-FORWARD CHECKED',
+      methodology: '현재와 유사한 과거 국면을 당시 이용 가능 데이터만으로 순차 검증합니다.',
+      current_regime: { return_1w: 1.2, return_1m: 2.4, return_3m: 4.8, realized_volatility_20d: 15.1 },
+      horizons: [{
+        horizon_days: 5, flat_band_percent: 0.56,
+        rise_probability: 46, sideways_probability: 29, fall_probability: 25,
+        dominant_direction: '상승', expected_return_percent: 0.7, analog_samples: 80,
+        average_distance: 0.9, validation_samples: 120, validation_hit_rate: 44,
+        validation_brier: 0.61, uniform_brier: 0.667,
+        validation_state: 'VALIDATED / BEATS UNIFORM',
+        warning: '유사국면의 조건부 빈도이며 보장된 수익확률이 아닙니다.'
+      }]
+    }]
   }
 };
 
@@ -234,6 +279,7 @@ for (const id of [
   'usMarket',
   'koreaMarket',
   'cryptoMarket',
+  'fundingMarket',
   'overviewCentralBank',
   'centralBankHero',
   'centralBankChart',
@@ -255,6 +301,12 @@ context.selectTab('centralbank');
 const centralBankPanel = panels.find((panel) => panel.id === 'tab-centralbank');
 if (centralBankPanel.hidden || !koreaPanel.hidden) {
   throw new Error('central bank tab selection contract failed');
+}
+
+context.selectTab('funding');
+const fundingPanel = panels.find((panel) => panel.id === 'tab-funding');
+if (fundingPanel.hidden || !centralBankPanel.hidden) {
+  throw new Error('funding tab selection contract failed');
 }
 
 if (fs.readFileSync('src/dashboard.js', 'utf8').includes('NODE_LABELS')) {
@@ -290,10 +342,22 @@ if (context.priceDirectionModel('us', {}).state.label !== '데이터 부족') {
 }
 
 const html = fs.readFileSync('src/dashboard.html', 'utf8');
+const dashboardJs = fs.readFileSync('src/dashboard.js', 'utf8');
 for (const id of ['krLiveKospi', 'krLiveKosdaq']) {
   if (!html.includes(`id="${id}"`)) {
     throw new Error(`Korean live index card is missing ${id}`);
   }
+}
+for (const id of ['terminalSearch', 'forecastOverview', 'fundingMarket']) {
+  if (!html.includes(`id="${id}"`)) {
+    throw new Error(`v0.9 terminal control is missing ${id}`);
+  }
+}
+if (!html.includes('F6 자금·포지션')) {
+  throw new Error('F6 funding and positioning workspace is missing');
+}
+if (!dashboardJs.includes('Brier / 균등') || !dashboardJs.includes('방향판단에 사용 금지')) {
+  throw new Error('forecast validation boundary is not explicit');
 }
 if (html.includes('tradingview-widget.com')) {
   throw new Error('restricted TradingView widget must not be loaded');
@@ -304,7 +368,6 @@ if (!fs.readFileSync('src/dashboard.js', 'utf8').includes("fetch('/api/kr-indice
 if (!html.includes('위기 점수와 공식 지표 계산에는 사용하지 않음')) {
   throw new Error('external quote calculation boundary is not disclosed');
 }
-const dashboardJs = fs.readFileSync('src/dashboard.js', 'utf8');
 const ambiguousMarketLabels = ['탈출 준비', '회복 관찰', '위기 탈출 목표 접근도'];
 for (const phrase of ambiguousMarketLabels) {
   if (dashboardJs.includes(phrase) || html.includes(phrase)) {

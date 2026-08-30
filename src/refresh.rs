@@ -31,6 +31,15 @@ const FRED_CURRENT_SERIES: &[&str] = &[
     "DJIA",
     "DGS10",
     "DGS2",
+    "DGS3MO",
+    "DGS5",
+    "DGS30",
+    "DFII5",
+    "DFII10",
+    "T5YIE",
+    "T10YIE",
+    "T5YIFR",
+    "IORB",
     "WALCL",
     "RRPONTSYD",
     "WTREGEN",
@@ -223,6 +232,8 @@ fn collect_current_fred(config: &Config, db: &Db, start: &str) -> collectors::Co
     for series in FRED_CURRENT_SERIES {
         let minimum_history = match *series {
             "JPNASSETS" => 15,
+            "SP500" | "NASDAQCOM" | "DJIA" | "VIXCLS" | "DGS10" | "DGS2" | "DGS3MO" | "DGS5"
+            | "DGS30" | "DFII5" | "DFII10" | "T5YIE" | "T10YIE" | "T5YIFR" => 800,
             "WALCL" | "ECBASSETSW" | "WTREGEN" | "WRESBAL" => 60,
             "DEXUSEU" | "DEXJPUS" | "RRPONTSYD" => 370,
             _ => 0,

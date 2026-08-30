@@ -83,11 +83,12 @@ const MARKET_CONFIG = {
     ],
     sections: [
       ['미국 주식·옵션 공포', 'US EQUITY / VOL', ['sp500', 'nasdaq', 'dow', 'vix']],
-      ['미국 국채금리·수익률곡선', 'US RATES / CURVE', ['us10y', 'us2y', 'curve_10y2y', 'curve_10y3m']],
+      ['미국 국채금리·수익률곡선', 'US RATES / CURVE', ['us3m', 'us2y', 'us5y', 'us10y', 'us30y', 'curve_10y2y', 'curve_10y3m']],
+      ['미국 실질금리·시장 기대인플레이션', 'US REAL RATES / INFLATION', ['us_real5y', 'us_real10y', 'us_be5y', 'us_be10y', 'us_5y5y']],
       ['미국 신용스프레드·금융여건', 'US CREDIT / CONDITIONS', ['hy_spread', 'ig_spread', 'ofr_fsi', 'stlfsi', 'nfci', 'anfci', 'nfci_leverage']],
       ['미국 성장·고용 선행지표', 'US GROWTH / LABOR', ['wei', 'cfnai', 'sahm', 'initial_claims', 'continued_claims']],
       ['미국 주택·은행·대출건전성', 'US HOUSING / BANKING', ['mortgage30', 'card_delinquency', 'loan_delinquency', 'bank_capital']],
-      ['연준 유동성·은행대출', 'FED LIQUIDITY / CREDIT', ['fed_assets', 'rrp', 'total_reserves', 'reserve_balances', 'business_loans', 'total_loans']],
+      ['연준 유동성·은행대출', 'FED LIQUIDITY / CREDIT', ['fed_assets', 'rrp', 'total_reserves', 'reserve_balances', 'iorb', 'business_loans', 'total_loans']],
       ['미 국채 입찰·딜러·담보조건', 'TREASURY / PLUMBING', ['treasury_bid_cover', 'auction_dealer', 'auction_direct', 'auction_indirect', 'dealer_fails', 'margin_tightening']],
       ['달러·글로벌 달러신용', 'USD / GLOBAL CREDIT', ['usd_index', 'usdkrw', 'global_dollar_credit']]
     ]
@@ -99,7 +100,8 @@ const MARKET_CONFIG = {
     factors: ['KOREA_FIN_STAB', 'KOREA_MARKET_INTERNALS', 'KOREA_MACRO', 'USD', 'LIQUIDITY', 'CREDIT', 'BANKING', 'RATES'],
     sections: [
       ['한국 주가지수·공식 등락률·환율', 'KR EQUITY / FX', ['kospi', 'kospi_return', 'kosdaq', 'kosdaq_return', 'usdkrw', 'kr_base_rate']],
-      ['한국 시장 내부체력·외부수요', 'KR BREADTH / MACRO', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth', 'kr_cli', 'cn_cli']],
+      ['한국 물가·통화·국채금리', 'KR MACRO / RATES', ['kr_cpi', 'kr_m2', 'kr_ktb3y', 'kr_ktb10y']],
+      ['한국 시장 내부체력·외부수요', 'KR BREADTH / LEADING', ['kospi_breadth', 'kosdaq_breadth', 'krx_breadth', 'kr_cli', 'cn_cli']],
       ['코스피·코스닥 시장규모', 'KR MARKET SCALE', ['kospi_value', 'kosdaq_value', 'kospi_volume', 'kosdaq_volume', 'kospi_cap', 'kosdaq_cap', 'kospi_issues', 'kosdaq_issues']],
       ['코스피200 선물·옵션 원본', 'K200 FUTURES / OPTIONS', ['krx_basis', 'krx_futures_oi', 'krx_futures_volume', 'krx_futures_value', 'krx_put_call', 'krx_option_iv', 'krx_options_oi', 'krx_options_volume', 'krx_options_value']],
       ['한국 채권시장', 'KR FIXED INCOME', ['krx_bond_yield', 'krx_kts_yield', 'krx_bond_basket_yield', 'krx_small_bond_yield', 'krx_bond_duration', 'krx_bond_convexity', 'krx_bond_value', 'krx_kts_value']],
@@ -118,9 +120,25 @@ const MARKET_CONFIG = {
       ['BTC 무기한선물 가격·미결제약정', 'BTC PERPETUAL / OI', ['btc_perp_price', 'btc_mark_price', 'btc_index_price', 'btc_oi']],
       ['BTC 펀딩·베이시스 방향과 위험크기', 'BTC FUNDING / BASIS', ['btc_current_funding', 'btc_funding', 'btc_funding_abs', 'btc_basis', 'btc_basis_abs']],
       ['BTC 전체·상위계정 포지셔닝', 'BTC POSITIONING', ['btc_global_ls', 'btc_top_position', 'btc_top_account']],
-      ['BTC 공격적 주문흐름', 'BTC TAKER FLOW', ['btc_taker']]
+      ['BTC 공격적 주문흐름', 'BTC TAKER FLOW', ['btc_taker']],
+      ['BTC 옵션 기대변동성·풋콜', 'BTC OPTIONS / DVOL', ['btc_dvol', 'btc_option_oi', 'btc_option_put_call', 'btc_option_volume']],
+      ['BTC 온체인 활동·가치평가', 'BTC ON-CHAIN', ['btc_active_addresses', 'btc_tx_count', 'btc_mvrv', 'btc_fees', 'btc_hash_rate', 'btc_market_cap']],
+      ['코인시장 달러 유동성', 'STABLECOIN LIQUIDITY', ['stablecoin_cap']]
     ]
   }
+};
+
+const FUNDING_CONFIG = {
+  title: '자금·포지션',
+  target: 'fundingMarket',
+  sections: [
+    ['미국 단기자금 조달금리·꼬리위험', 'OFR MONEY MARKET', ['sofr', 'effr', 'sofr_tail', 'sofr_effr', 'sofr_volume']],
+    ['미국 레포 시장 규모', 'OFR DVP REPO', ['repo_outstanding', 'repo_volume']],
+    ['CFTC 미국 주가지수 기관 포지션', 'CFTC EQUITY TFF', ['cftc_spx_oi', 'cftc_spx_asset', 'cftc_spx_lev', 'cftc_ndx_asset', 'cftc_ndx_lev']],
+    ['CFTC 미 국채·달러 기관 포지션', 'CFTC RATES / USD TFF', ['cftc_ust_asset', 'cftc_ust_lev', 'cftc_dxy_lev']],
+    ['CFTC·Deribit 비트코인 파생', 'BTC INSTITUTIONAL / OPTIONS', ['cftc_btc_oi', 'cftc_btc_lev', 'btc_dvol', 'btc_option_oi', 'btc_option_put_call', 'btc_option_volume']],
+    ['비트코인 네트워크·스테이블코인 유동성', 'ON-CHAIN / LIQUIDITY', ['btc_active_addresses', 'btc_tx_count', 'btc_mvrv', 'btc_fees', 'btc_hash_rate', 'btc_market_cap', 'stablecoin_cap']]
+  ]
 };
 
 const PRICE_DIRECTION_CONFIG = {
@@ -163,16 +181,38 @@ const INDICATOR_RULES = {
   krx_put_call: [1.2, 1.6, '비율 상승은 풋 거래 또는 포지션 비중 증가', true],
   krx_option_iv: [45, 65, '최근 범위 60백분위 아래이면 옵션 변동성 위험 하락', true],
   curve_10y2y: [0.25, 0, '+0.25%p 이상이면 10년 금리가 2년 금리보다 높음', false],
-  curve_10y3m: [0.25, 0, '+0.25%p 이상이면 10년 금리가 3개월 금리보다 높음', false]
+  curve_10y3m: [0.25, 0, '+0.25%p 이상이면 10년 금리가 3개월 금리보다 높음', false],
+  sofr_tail: [0.10, 0.25, 'SOFR 99백분위와 중앙값 차이 확대는 조달비용 분산과 꼬리 마찰 증가', true],
+  sofr_effr: [0.10, 0.25, 'SOFR가 EFFR보다 크게 높아지면 담보부 조달시장의 상대적 압박 가능성', true],
+  btc_dvol: [60, 80, 'DVOL 상승은 BTC 옵션시장이 반영하는 기대변동성 확대', true],
+  btc_option_put_call: [1.0, 1.3, '풋 미결제약정/콜 미결제약정이 1보다 높으면 풋 비중 우세', true],
+  btc_mvrv: [3.0, 4.0, 'MVRV가 높을수록 시가총액이 실현총액보다 크게 높은 구간', true]
 };
 
 const TICKER_KEYS = ['usdkrw', 'btc', 'sp500', 'nasdaq', 'dow', 'kospi', 'kosdaq'];
-const TAB_NAMES = ['overview', 'us', 'korea', 'crypto', 'centralbank'];
+const TAB_NAMES = ['overview', 'us', 'korea', 'crypto', 'centralbank', 'funding'];
 let workerWasRunning = false;
 let dashboardErrors = [];
 let collectionErrors = [];
 let officialKrIndices = new Map();
 let liveKrIndices = new Map();
+let lastPayload = null;
+let lastIndicators = {};
+let terminalScope = localStorage.getItem('economics-radar-scope') || 'all';
+let terminalDensity = localStorage.getItem('economics-radar-density') || 'compact';
+let favoriteKeys = loadFavorites();
+
+function loadFavorites() {
+  const defaults = ['sp500', 'vix', 'kospi', 'kosdaq', 'usdkrw', 'btc', 'sofr', 'btc_dvol'];
+  try {
+    const raw = localStorage.getItem('economics-radar-favorites');
+    if (raw === null) return new Set(defaults);
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed.filter((key) => typeof key === 'string') : defaults);
+  } catch (_error) {
+    return new Set(defaults);
+  }
+}
 
 function factorLabel(config, name) {
   const market = config?.riskKey === 'US_EQUITY'
@@ -250,6 +290,8 @@ function formatValue(indicator) {
       return `₩${value.toLocaleString('ko-KR', { maximumFractionDigits: digits })}`;
     case 'percent':
       return `${value.toFixed(digits)}%`;
+    case 'percentage_points':
+      return `${value.toFixed(digits)}%p`;
     case 'rate':
       return `${(value * 100).toFixed(digits)}%`;
     case 'fraction_percent':
@@ -266,12 +308,16 @@ function formatValue(indicator) {
       return Math.abs(value) >= 1e12
         ? `₩${(value / 1e12).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}조`
         : `₩${(value / 1e8).toLocaleString('ko-KR', { maximumFractionDigits: 2 })}억`;
+    case 'krw_billion':
+      return `₩${(value / 1e3).toLocaleString('ko-KR', { maximumFractionDigits: digits })}조`;
     case 'contracts':
       return compact(value, 2);
     case 'count':
       return compact(value, 2);
     case 'btc':
       return `${compact(value, 2)} BTC`;
+    case 'hashrate_th':
+      return `${compact(value, 2)} TH/s`;
     case 'years':
       return `${value.toFixed(digits)}년`;
     case 'ratio':
@@ -292,12 +338,12 @@ function formatChange(indicator) {
   if (!indicator || finite(indicator.value) === null) return 'NO DATA';
   const pct = finite(indicator.change_pct);
   const change = finite(indicator.change);
-  if (pct !== null && !['percent', 'rate', 'ratio', 'points', 'fraction_percent'].includes(indicator.unit)) {
+  if (pct !== null && !['percent', 'percentage_points', 'rate', 'ratio', 'points', 'fraction_percent'].includes(indicator.unit)) {
     return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
   }
   if (change === null) return '—';
   const adjusted = ['rate', 'fraction_percent'].includes(indicator.unit) ? change * 100 : change;
-  const suffix = indicator.unit === 'percent' || indicator.unit === 'rate' || indicator.unit === 'fraction_percent'
+  const suffix = indicator.unit === 'percent' || indicator.unit === 'percentage_points' || indicator.unit === 'rate' || indicator.unit === 'fraction_percent'
     ? 'pp'
     : indicator.unit === 'points' ? 'p' : '';
   return `${adjusted >= 0 ? '+' : ''}${adjusted.toFixed(Number(indicator.decimals ?? 2))}${suffix}`;
@@ -679,6 +725,133 @@ function renderOverview(payload, indicators) {
   renderOverviewCentralBank(payload.dashboard?.central_bank);
   renderOverviewDirection(indicators);
   renderOverviewMatrix(indicators);
+  renderPriority(indicators);
+  renderFavorites(indicators);
+  renderForecastOverview(payload);
+}
+
+function saveFavorites() {
+  localStorage.setItem('economics-radar-favorites', JSON.stringify([...favoriteKeys]));
+}
+
+function tabForIndicator(indicator) {
+  return ['us', 'korea', 'crypto'].includes(indicator?.market) ? indicator.market : 'funding';
+}
+
+function jumpToIndicator(key) {
+  const indicator = lastIndicators[key];
+  if (!indicator) return;
+  selectTab(tabForIndicator(indicator));
+  const row = document.querySelector(`[data-indicator-key="${key}"]`);
+  const section = row?.closest('details');
+  if (section) section.open = true;
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('indicator-highlight');
+    setTimeout(() => row.classList.remove('indicator-highlight'), 2200);
+  }
+  $('searchResults').hidden = true;
+}
+
+function toggleFavorite(key) {
+  if (favoriteKeys.has(key)) favoriteKeys.delete(key);
+  else favoriteKeys.add(key);
+  saveFavorites();
+  document.querySelectorAll(`[data-favorite-key="${key}"]`).forEach((button) => {
+    const active = favoriteKeys.has(key);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.textContent = active ? '★' : '☆';
+  });
+  renderFavorites(lastIndicators);
+}
+
+function monitorRow(indicator, reason = '') {
+  const button = el('button', 'monitor-row');
+  button.type = 'button';
+  button.addEventListener('click', () => jumpToIndicator(indicator.key));
+  button.append(
+    el('span', 'monitor-symbol', indicator.symbol || indicator.key.toUpperCase()),
+    el('span', 'monitor-label', indicator.label || indicator.key),
+    el('strong', '', formatValue(indicator)),
+    el('span', direction(indicator), formatChange(indicator)),
+    el('small', '', reason || `${indicator.source_series || 'NO SOURCE'} · ${indicator.freshness || 'UNKNOWN'}`)
+  );
+  return button;
+}
+
+function renderFavorites(indicators) {
+  const container = $('favoritesMonitor');
+  clear(container);
+  const rows = [...favoriteKeys].map((key) => indicators[key]).filter(Boolean);
+  if (!rows.length) {
+    container.append(el('p', 'monitor-empty', '관심 지표가 없습니다. 각 지표 표의 ☆ 버튼을 누르면 이 모니터에 고정됩니다.'));
+    return;
+  }
+  rows.forEach((indicator) => container.append(monitorRow(indicator)));
+}
+
+function priorityReason(indicator) {
+  const freshness = String(indicator?.freshness || 'UNKNOWN');
+  if (freshness === 'NO DATA') return { priority: 4, text: `결측 · ${indicator.cadence || 'UNKNOWN'} 데이터 대기` };
+  if (freshness.startsWith('STALE')) return { priority: 3, text: `${freshness} · 출처 갱신 확인 필요` };
+  const reading = indicatorReading(indicator);
+  if (reading.key === 'red') return { priority: 2, text: `${reading.label} · ${reading.hint}` };
+  const changePct = finite(indicator?.change_pct);
+  if (changePct !== null && Math.abs(changePct) >= 3) return { priority: 1, text: `비교기간 큰 변화 ${signedPercent(changePct)}` };
+  return null;
+}
+
+function renderPriority(indicators) {
+  const container = $('priorityMonitor');
+  clear(container);
+  const rows = Object.values(indicators)
+    .map((indicator) => [indicator, priorityReason(indicator)])
+    .filter(([, reason]) => reason)
+    .sort((a, b) => b[1].priority - a[1].priority || Math.abs(finite(b[0].change_pct) || 0) - Math.abs(finite(a[0].change_pct) || 0))
+    .slice(0, 12);
+  if (!rows.length) {
+    container.append(el('p', 'monitor-empty', '현재 우선 확인 규칙에 걸린 결측·지연·위험구간·큰 변화가 없습니다.'));
+    return;
+  }
+  rows.forEach(([indicator, reason]) => container.append(monitorRow(indicator, reason.text)));
+}
+
+function updateSearchResults(query) {
+  const container = $('searchResults');
+  const normalized = String(query || '').trim().toLowerCase();
+  clear(container);
+  if (!normalized) {
+    container.hidden = true;
+    return;
+  }
+  const rows = Object.values(lastIndicators)
+    .filter((indicator) => [indicator.key, indicator.symbol, indicator.label, indicator.asset_class, indicator.source_series]
+      .some((value) => String(value || '').toLowerCase().includes(normalized)))
+    .slice(0, 20);
+  const heading = el('div', 'search-results-heading');
+  heading.append(el('strong', '', `검색결과 ${rows.length}건`), el('span', '', 'Enter 첫 결과 · Esc 닫기'));
+  container.append(heading);
+  rows.forEach((indicator) => container.append(monitorRow(indicator)));
+  if (!rows.length) container.append(el('p', 'monitor-empty', '일치하는 지표가 없습니다. 심볼, 한글명, 출처를 바꿔 검색하세요.'));
+  container.hidden = false;
+}
+
+function applyWorkspacePreferences() {
+  document.body.classList.toggle('readable-density', terminalDensity === 'readable');
+  const coreMode = terminalScope === 'core';
+  document.querySelectorAll('[data-secondary-section="true"]').forEach((section) => {
+    const hasPriority = Boolean(section.querySelector('.indicator-exception'));
+    const hasFavorite = [...section.querySelectorAll('[data-favorite-key]')]
+      .some((button) => favoriteKeys.has(button.dataset.favoriteKey));
+    section.hidden = coreMode && !hasPriority && !hasFavorite;
+  });
+  const scopeButton = $('scopeButton');
+  scopeButton.textContent = coreMode ? '핵심만 표시 중' : '전체 표시 중';
+  scopeButton.setAttribute('aria-pressed', String(coreMode));
+  const densityButton = $('densityButton');
+  densityButton.textContent = terminalDensity === 'readable' ? '큰 글자 표시 중' : '고밀도 표시 중';
+  densityButton.setAttribute('aria-pressed', String(terminalDensity === 'readable'));
 }
 
 function renderOverviewCentralBank(centralBank) {
@@ -988,6 +1161,102 @@ function priceDirectionCard(model, compactMode = false) {
   return card;
 }
 
+function forecastList(payload) {
+  return Array.isArray(payload?.dashboard?.forecasts) ? payload.dashboard.forecasts : [];
+}
+
+function forecastProbabilityRow(label, value, className) {
+  const row = el('div', `forecast-probability ${className}`);
+  const number = finite(value) || 0;
+  row.append(el('span', '', label), el('strong', '', `${number.toFixed(1)}%`));
+  const track = el('div', 'forecast-probability-track');
+  const fill = el('i');
+  fill.style.width = `${Math.max(0, Math.min(100, number))}%`;
+  track.append(fill);
+  row.append(track);
+  return row;
+}
+
+function forecastHorizonCard(horizon) {
+  const validationGood = horizon.validation_state === 'VALIDATED / BEATS UNIFORM';
+  const card = el('article', `forecast-horizon ${validationGood ? 'validated' : 'unvalidated'}`);
+  const header = document.createElement('header');
+  header.append(
+    el('span', '', `${horizon.horizon_days}거래일 전망`),
+    el('strong', '', horizon.dominant_direction || '데이터 부족')
+  );
+  card.append(header);
+  const probabilities = el('div', 'forecast-probabilities');
+  probabilities.append(
+    forecastProbabilityRow('상승', horizon.rise_probability, 'rise'),
+    forecastProbabilityRow('횡보', horizon.sideways_probability, 'sideways'),
+    forecastProbabilityRow('하락', horizon.fall_probability, 'fall')
+  );
+  card.append(probabilities);
+  const metrics = el('dl', 'forecast-metrics');
+  for (const [label, value] of [
+    ['조건부 평균수익', signedPercent(horizon.expected_return_percent)],
+    ['횡보기준', `±${Number(horizon.flat_band_percent || 0).toFixed(2)}%`],
+    ['유사국면', `${horizon.analog_samples || 0}개`],
+    ['순차검증 적중', finite(horizon.validation_hit_rate) === null ? '검증부족' : `${Number(horizon.validation_hit_rate).toFixed(1)}%`],
+    ['Brier / 균등', finite(horizon.validation_brier) === null ? '—' : `${Number(horizon.validation_brier).toFixed(3)} / ${Number(horizon.uniform_brier).toFixed(3)}`]
+  ]) {
+    metrics.append(el('dt', '', label), el('dd', '', value));
+  }
+  card.append(metrics);
+  const validation = el('p', `forecast-validation ${validationGood ? 'good' : 'weak'}`,
+    validationGood ? '과거 순차검증에서 균등확률보다 오차가 작음' : '검증 우위 없음 또는 표본 부족 · 방향판단에 사용 금지');
+  card.append(validation, el('small', 'forecast-warning', horizon.warning));
+  return card;
+}
+
+function renderMarketForecast(payload, market) {
+  const forecast = forecastList(payload).find((item) => item.market === market);
+  const panel = el('section', 'terminal-panel market-forecast-panel');
+  const heading = el('div', 'panel-heading');
+  heading.append(el('span', '', 'PROBABILITY LAB'), el('strong', '', `${forecast?.label || market} 다중기간 확률`));
+  panel.append(heading);
+  if (!forecast || !Array.isArray(forecast.horizons) || !forecast.horizons.length) {
+    panel.append(el('p', 'forecast-empty', `${forecast?.status || 'NO FORECAST'} · 최소 과거 표본이 모일 때까지 확률을 만들지 않습니다.`));
+    return panel;
+  }
+  const regime = forecast.current_regime;
+  if (regime) {
+    const current = el('div', 'forecast-regime');
+    current.append(
+      metricSummary('최근 1주', signedPercent(regime.return_1w), '가격수익률'),
+      metricSummary('최근 1개월', signedPercent(regime.return_1m), '가격수익률'),
+      metricSummary('최근 3개월', signedPercent(regime.return_3m), '가격수익률'),
+      metricSummary('20일 실현변동성', `${Number(regime.realized_volatility_20d).toFixed(1)}%`, '연율화')
+    );
+    panel.append(current);
+  }
+  const grid = el('div', 'forecast-horizon-grid');
+  forecast.horizons.forEach((horizon) => grid.append(forecastHorizonCard(horizon)));
+  panel.append(grid, el('p', 'forecast-methodology', `${forecast.methodology} · 원천 ${forecast.source_series} · 기준 ${forecast.as_of || '—'}`));
+  return panel;
+}
+
+function renderForecastOverview(payload) {
+  const container = $('forecastOverview');
+  clear(container);
+  for (const forecast of forecastList(payload)) {
+    const horizon = forecast.horizons?.find((item) => item.horizon_days === 5) || forecast.horizons?.[0];
+    const card = el('article', 'forecast-summary-card');
+    card.append(el('span', '', forecast.label), el('strong', '', horizon?.dominant_direction || '계산 보류'));
+    if (horizon) {
+      card.append(el('p', '', `상승 ${Number(horizon.rise_probability).toFixed(1)} · 횡보 ${Number(horizon.sideways_probability).toFixed(1)} · 하락 ${Number(horizon.fall_probability).toFixed(1)}`));
+      card.append(el('small', '', horizon.validation_state === 'VALIDATED / BEATS UNIFORM'
+        ? `5거래일 · 순차검증 ${Number(horizon.validation_hit_rate).toFixed(1)}% · 검증우위 있음`
+        : '검증우위 없음 또는 표본 부족 · 관찰용'));
+    } else {
+      card.append(el('p', '', forecast.status), el('small', '', '표본을 임의 추정하지 않음'));
+    }
+    card.addEventListener('click', () => selectTab(forecast.market));
+    container.append(card);
+  }
+}
+
 function renderMarket(config, payload, indicators) {
   const snapshot = payload.snapshot || {};
   const container = $(config.target);
@@ -1026,19 +1295,22 @@ function renderMarket(config, payload, indicators) {
   const directionName = config.riskKey === 'US_EQUITY' ? 'us' : config.riskKey === 'KOREA_EQUITY' ? 'korea' : 'crypto';
   directionPanel.append(directionHeading, priceDirectionCard(priceDirectionModel(directionName, indicators)));
   container.append(directionPanel);
+  container.append(renderMarketForecast(payload, directionName));
 
   if (directionName === 'crypto') {
     container.append(renderCryptoRegime(indicators));
   }
 
   const assetGrid = el('div', 'asset-grid');
-  for (const [title, code, keys] of config.sections) {
-    const panel = el('section', 'terminal-panel');
-    const heading = el('div', 'panel-heading');
+  config.sections.forEach(([title, code, keys], sectionIndex) => {
+    const panel = el('details', 'terminal-panel market-section');
+    panel.open = true;
+    panel.dataset.secondarySection = String(sectionIndex >= 4);
+    const heading = el('summary', 'panel-heading');
     heading.append(el('span', '', code), el('strong', '', title));
-    panel.append(heading, indicatorTable(keys, indicators));
+    panel.append(heading, indicatorTable(keys, indicators, title));
     assetGrid.append(panel);
-  }
+  });
   container.append(assetGrid);
 
   const factorPanel = el('section', 'terminal-panel');
@@ -1067,6 +1339,46 @@ function renderMarket(config, payload, indicators) {
   }
   factorPanel.append(heading, board);
   container.append(factorPanel);
+  applyWorkspacePreferences();
+}
+
+function renderFunding(indicators) {
+  const container = $(FUNDING_CONFIG.target);
+  clear(container);
+  const available = FUNDING_CONFIG.sections
+    .flatMap(([, , keys]) => keys)
+    .map((key) => indicators[key])
+    .filter((indicator) => finite(indicator?.value) !== null);
+  const missing = FUNDING_CONFIG.sections
+    .flatMap(([, , keys]) => keys)
+    .filter((key) => finite(indicators[key]?.value) === null).length;
+  const hero = el('section', 'funding-hero');
+  hero.append(
+    metricSummary('수집 지표', `${available.length}개`, 'OFR·CFTC·Deribit·Coin Metrics'),
+    metricSummary('결측', `${missing}개`, '추정값으로 채우지 않음'),
+    metricSummary('SOFR 꼬리차', formatValue(indicators.sofr_tail || {}), '99백분위 − 중앙값'),
+    metricSummary('BTC DVOL', formatValue(indicators.btc_dvol || {}), '옵션 기대변동성'),
+    metricSummary('스테이블코인', formatValue(indicators.stablecoin_cap || {}), 'USDT+USDC 합산')
+  );
+  container.append(hero);
+  const assetGrid = el('div', 'asset-grid');
+  FUNDING_CONFIG.sections.forEach(([title, code, keys], sectionIndex) => {
+    const panel = el('details', 'terminal-panel market-section');
+    panel.open = true;
+    panel.dataset.secondarySection = String(sectionIndex >= 4);
+    const heading = el('summary', 'panel-heading');
+    heading.append(el('span', '', code), el('strong', '', title));
+    panel.append(heading, indicatorTable(keys, indicators, title));
+    assetGrid.append(panel);
+  });
+  container.append(assetGrid);
+  applyWorkspacePreferences();
+}
+
+function metricSummary(label, value, note) {
+  const card = el('article', 'funding-metric');
+  card.append(el('span', '', label), el('strong', '', value), el('small', '', note));
+  return card;
 }
 
 function renderCryptoRegime(indicators) {
@@ -1124,12 +1436,15 @@ function buildMarketSummary(config, snapshot, indicators, state) {
   return `${state.message} ${moverText} 전체 모델 신뢰도는 ${score(snapshot.confidence)}%이며 결측치는 위험 신호로 임의 변환하지 않습니다.`;
 }
 
-function indicatorTable(keys, indicators) {
+function indicatorTable(keys, indicators, label = '시장 지표') {
   const table = el('table', 'indicator-table');
+  table.setAttribute('aria-label', label);
   const head = document.createElement('thead');
   const headRow = document.createElement('tr');
   for (const title of ['지표', '현재값 / RAW', '직전 변화', '최근 범위', '쉬운 해석', '추세', '기준·출처']) {
-    headRow.append(el('th', '', title));
+    const cell = el('th', '', title);
+    cell.scope = 'col';
+    headRow.append(cell);
   }
   head.append(headRow);
 
@@ -1143,8 +1458,17 @@ function indicatorTable(keys, indicators) {
       history: []
     };
     const row = document.createElement('tr');
+    row.dataset.indicatorKey = key;
+    row.classList.toggle('indicator-exception', Boolean(priorityReason(indicator)));
     const nameCell = document.createElement('td');
+    const favorite = el('button', `favorite-button${favoriteKeys.has(key) ? ' active' : ''}`, favoriteKeys.has(key) ? '★' : '☆');
+    favorite.type = 'button';
+    favorite.dataset.favoriteKey = key;
+    favorite.setAttribute('aria-label', `${indicator.label} 관심 지표 ${favoriteKeys.has(key) ? '제거' : '추가'}`);
+    favorite.setAttribute('aria-pressed', String(favoriteKeys.has(key)));
+    favorite.addEventListener('click', () => toggleFavorite(key));
     nameCell.append(
+      favorite,
       el('span', 'indicator-name', indicator.symbol),
       el('span', 'indicator-label', indicator.label),
       el('span', 'indicator-asset', String(indicator.asset_class || '').toUpperCase())
@@ -1531,6 +1855,8 @@ function renderSafely(label, renderFn, errors) {
 
 function render(payload) {
   const indicators = indicatorMap(payload);
+  lastPayload = payload;
+  lastIndicators = indicators;
   officialKrIndices = new Map(
     ['kospi', 'kosdaq']
       .map((key) => [key, indicators[key]])
@@ -1550,6 +1876,11 @@ function render(payload) {
   renderSafely(
     '중앙은행 탭',
     () => renderCentralBank(payload.dashboard?.central_bank),
+    errors
+  );
+  renderSafely(
+    '자금·포지션 탭',
+    () => renderFunding(indicators),
     errors
   );
   renderSafely(
@@ -1652,12 +1983,14 @@ async function requestRefresh() {
   }
 }
 
-function selectTab(name) {
+function selectTab(name, moveFocus = false) {
   if (!TAB_NAMES.includes(name)) return;
   document.querySelectorAll('.tab-button').forEach((button) => {
     const selected = button.dataset.tab === name;
     button.classList.toggle('active', selected);
     button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    if (selected && moveFocus) button.focus();
   });
   document.querySelectorAll('.tab-panel').forEach((panel) => {
     panel.hidden = panel.id !== `tab-${name}`;
@@ -1665,7 +1998,19 @@ function selectTab(name) {
 }
 
 document.querySelectorAll('.tab-button').forEach((button) => {
-  button.addEventListener('click', () => selectTab(button.dataset.tab));
+  button.addEventListener('click', () => selectTab(button.dataset.tab, true));
+});
+
+document.querySelector('.market-tabs').addEventListener('keydown', (event) => {
+  const current = TAB_NAMES.indexOf(document.activeElement?.dataset?.tab);
+  if (current < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const next = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? TAB_NAMES.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + TAB_NAMES.length) % TAB_NAMES.length;
+  selectTab(TAB_NAMES[next], true);
 });
 
 document.addEventListener('keydown', (event) => {
@@ -1674,15 +2019,46 @@ document.addEventListener('keydown', (event) => {
     F2: 'us',
     F3: 'korea',
     F4: 'crypto',
-    F5: 'centralbank'
+    F5: 'centralbank',
+    F6: 'funding'
   }[event.key];
   if (shortcut) {
     event.preventDefault();
     selectTab(shortcut);
   }
+  if (event.key === '/' && document.activeElement !== $('terminalSearch')) {
+    event.preventDefault();
+    $('terminalSearch').focus();
+    $('terminalSearch').select();
+  }
+  if (event.key === 'Escape') {
+    $('searchResults').hidden = true;
+    $('terminalSearch').blur();
+  }
 });
 
 $('refreshButton').addEventListener('click', requestRefresh);
+$('terminalSearch').addEventListener('input', (event) => updateSearchResults(event.target.value));
+$('terminalSearch').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  const first = $('searchResults').querySelector('.monitor-row');
+  if (first) {
+    event.preventDefault();
+    first.click();
+  }
+});
+$('scopeButton').addEventListener('click', () => {
+  terminalScope = terminalScope === 'all' ? 'core' : 'all';
+  localStorage.setItem('economics-radar-scope', terminalScope);
+  applyWorkspacePreferences();
+});
+$('densityButton').addEventListener('click', () => {
+  terminalDensity = terminalDensity === 'compact' ? 'readable' : 'compact';
+  localStorage.setItem('economics-radar-density', terminalDensity);
+  applyWorkspacePreferences();
+});
+selectTab('overview');
+applyWorkspacePreferences();
 loadDashboard();
 loadKrIndexReference();
 loadRefreshStatus();

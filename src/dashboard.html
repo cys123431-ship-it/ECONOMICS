@@ -19,6 +19,9 @@
         </div>
       </div>
       <div class="terminal-actions">
+        <label class="terminal-search-label" for="terminalSearch"><span>FIND</span><input id="terminalSearch" type="search" autocomplete="off" placeholder="/ 지표·심볼·출처 검색" aria-controls="searchResults"></label>
+        <button id="scopeButton" class="utility-button" type="button" aria-pressed="false">전체 지표</button>
+        <button id="densityButton" class="utility-button" type="button" aria-pressed="false">읽기 크게</button>
         <span class="connection"><span id="connectionDot" class="status-dot"></span><span id="connectionText">SYSTEM CHECK</span></span>
         <button id="refreshButton" type="button">최신 데이터 수집</button>
       </div>
@@ -30,11 +33,13 @@
       <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-korea" data-tab="korea">F3 한국</button>
       <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-crypto" data-tab="crypto">F4 코인</button>
       <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-centralbank" data-tab="centralbank">F5 중앙은행</button>
+      <button class="tab-button" role="tab" aria-selected="false" aria-controls="tab-funding" data-tab="funding">F6 자금·포지션</button>
     </nav>
   </header>
 
   <main>
     <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+    <section id="searchResults" class="search-results" aria-label="통합 검색 결과" hidden></section>
 
     <section id="tab-overview" class="tab-panel" role="tabpanel">
       <div class="screen-title">
@@ -44,6 +49,18 @@
       <div id="overviewGauges" class="gauge-grid"></div>
       <div id="marketLights" class="market-light-grid"></div>
       <div class="overview-grid">
+        <section class="terminal-panel priority-monitor wide-panel">
+          <div class="panel-heading"><span>EXCEPTION MONITOR</span><strong>즉시 확인 · 결측·지연·큰 변화</strong></div>
+          <div id="priorityMonitor" class="priority-grid"></div>
+        </section>
+        <section class="terminal-panel forecast-monitor wide-panel">
+          <div class="panel-heading"><span>WALK-FORWARD PROBABILITY LAB</span><strong>실험적 상승·횡보·하락 확률 · 검증결과 포함</strong></div>
+          <div id="forecastOverview" class="forecast-overview"></div>
+        </section>
+        <section class="terminal-panel favorites-monitor wide-panel">
+          <div class="panel-heading"><span>MY MONITOR</span><strong>관심 지표 · 표의 별 버튼으로 추가</strong></div>
+          <div id="favoritesMonitor" class="favorites-grid"></div>
+        </section>
         <section class="terminal-panel central-bank-overview-panel wide-panel">
           <div class="panel-heading"><span>CENTRAL BANK LIQUIDITY BIAS</span><strong>중앙은행 유동성 롱·숏</strong></div>
           <div id="overviewCentralBank" class="central-bank-overview"></div>
@@ -131,6 +148,15 @@
           <div id="centralBankMethodology" class="central-bank-methodology"></div>
         </section>
       </div>
+    </section>
+
+    <section id="tab-funding" class="tab-panel" role="tabpanel" hidden>
+      <div class="screen-title"><div><span class="screen-code">FUNDING / POSITIONING &lt;GO&gt;</span><h2>자금조달·기관포지션·코인 유동성</h2></div><span class="asof market-asof">—</span></div>
+      <section class="funding-primer" aria-label="자금과 포지션 해석 원칙">
+        <strong>해석 원칙</strong>
+        <p>SOFR 꼬리·EFFR 차이는 단기 조달 마찰, CFTC는 주간 참여자 포지션, DVOL·풋콜은 옵션 기대변동성, 온체인·스테이블코인은 네트워크와 유동성 맥락입니다. 각각은 상승·하락을 확정하는 매매 신호가 아닙니다.</p>
+      </section>
+      <div id="fundingMarket" class="market-terminal"></div>
     </section>
   </main>
 

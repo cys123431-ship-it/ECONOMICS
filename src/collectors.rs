@@ -4,7 +4,8 @@ use crate::{
     krx_analytics,
 };
 use chrono::{
-    Datelike, Duration as ChronoDuration, FixedOffset, NaiveDate, SecondsFormat, Utc, Weekday,
+    Datelike, Duration as ChronoDuration, FixedOffset, NaiveDate, SecondsFormat, TimeZone, Utc,
+    Weekday,
 };
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ impl CollectionReport {
 fn client(config: &Config) -> Result<Client, Box<dyn Error>> {
     Ok(Client::builder()
         .timeout(Duration::from_secs(config.http_timeout_secs))
-        .user_agent("ECONOMICS-Radar/0.3")
+        .user_agent(concat!("ECONOMICS-Radar/", env!("CARGO_PKG_VERSION")))
         .build()?)
 }
 
@@ -74,6 +75,15 @@ const FRED_SERIES: &[&str] = &[
     "DJIA",
     "DGS10",
     "DGS2",
+    "DGS3MO",
+    "DGS5",
+    "DGS30",
+    "DFII5",
+    "DFII10",
+    "T5YIE",
+    "T10YIE",
+    "T5YIFR",
+    "IORB",
     "WALCL",
     "RRPONTSYD",
     "WTREGEN",
@@ -318,6 +328,13 @@ pub fn collect_builtin_official(
     let mut report = CollectionReport::default();
     for (name, result) in [
         ("ofr fsi", collect_ofr_fsi(&http, db, start)),
+        ("ofr short-term funding", collect_ofr_stfm(&http, db, start)),
+        ("cftc tff positioning", collect_cftc_tff(&http, db, start)),
+        ("deribit btc options", collect_deribit_btc(&http, db, start)),
+        (
+            "coin metrics community",
+            collect_coinmetrics(&http, db, start),
+        ),
         (
             "ny fed primary dealers",
             collect_nyfed_dealer_fails(&http, db, start),
@@ -344,6 +361,477 @@ pub fn collect_builtin_official(
             Ok(collected) => report.merge(collected),
             Err(error) => report.error("fed scoos", error),
         }
+    }
+    Ok(report)
+}
+
+fn put_public_observation(
+    db: &Db,
+    report: &mut CollectionReport,
+    source: &str,
+    series: &str,
+    observed_at: &str,
+    value: f64,
+    metadata: Value,
+) {
+    report.record(db.put(&NewObservation {
+        source: source.into(),
+        series: series.into(),
+        entity: String::new(),
+        observed_at: observed_at.into(),
+        value,
+        released_at: None,
+        source_asof: Some(Utc::now().to_rfc3339()),
+        revision_id: Some(format!("value:{value:.17}")),
+        metadata,
+    }));
+}
+
+fn collect_ofr_series(
+    http: &Client,
+    mnemonic: &str,
+    start: &str,
+) -> Result<Vec<(String, f64)>, Box<dyn Error>> {
+    let value: Value = http
+        .get("https://data.financialresearch.gov/v1/series/timeseries")
+        .query(&[("mnemonic", mnemonic), ("start_date", start)])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let rows = value
+        .as_array()
+        .ok_or("OFR STFM response is not an array")?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let row = row.as_array()?;
+            Some((
+                row.first()?.as_str()?.get(..10)?.to_string(),
+                parse_number(row.get(1))?,
+            ))
+        })
+        .collect())
+}
+
+fn collect_ofr_stfm(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    const DEFINITIONS: &[(&str, &str, &str)] = &[
+        ("FNYR-SOFR-A", "SOFR", "percent"),
+        ("FNYR-SOFR_99Pctl-A", "SOFR_99P", "percent"),
+        ("FNYR-SOFR_UV-A", "SOFR_VOLUME", "usd"),
+        ("FNYR-EFFR-A", "EFFR", "percent"),
+        ("REPO-DVP_OV_TOT-F", "DVP_REPO_OUTSTANDING", "usd"),
+        ("REPO-DVP_TV_TOT-F", "DVP_REPO_VOLUME", "usd"),
+    ];
+    let mut report = CollectionReport::default();
+    let mut collected: BTreeMap<&str, BTreeMap<String, f64>> = BTreeMap::new();
+    for (mnemonic, series, unit) in DEFINITIONS {
+        let rows = collect_ofr_series(http, mnemonic, start)?;
+        let mut by_date = BTreeMap::new();
+        let mut latest = None;
+        for (date, value) in rows {
+            put_public_observation(
+                db,
+                &mut report,
+                "ofr_repo",
+                series,
+                &date,
+                value,
+                json!({"mnemonic": mnemonic, "unit": unit, "official_feed": "OFR Short-term Funding Monitor"}),
+            );
+            latest = Some(date.clone());
+            by_date.insert(date, value);
+        }
+        if let Some(latest) = latest {
+            db.mark_series_checked("ofr_repo", series, &latest)?;
+        }
+        collected.insert(series, by_date);
+    }
+
+    for (left, right, target, formula) in [
+        (
+            "SOFR_99P",
+            "SOFR",
+            "SOFR_P99_SPREAD",
+            "SOFR 99th percentile - SOFR median",
+        ),
+        ("SOFR", "EFFR", "SOFR_EFFR_SPREAD", "SOFR - EFFR"),
+    ] {
+        let Some(left_rows) = collected.get(left) else {
+            continue;
+        };
+        let Some(right_rows) = collected.get(right) else {
+            continue;
+        };
+        let mut latest = None;
+        for (date, left_value) in left_rows {
+            let Some(right_value) = right_rows.get(date) else {
+                continue;
+            };
+            put_public_observation(
+                db,
+                &mut report,
+                "ofr_repo",
+                target,
+                date,
+                left_value - right_value,
+                json!({"unit": "percentage_points", "derived": true, "formula": formula}),
+            );
+            latest = Some(date.clone());
+        }
+        if let Some(latest) = latest {
+            db.mark_series_checked("ofr_repo", target, &latest)?;
+        }
+    }
+    Ok(report)
+}
+
+fn collect_cftc_tff(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    const CONTRACTS: &[(&str, &str, &str)] = &[
+        ("SPX", "13874A", "E-mini S&P 500"),
+        ("NDX", "209742", "Nasdaq-100 Mini"),
+        ("UST10Y", "043602", "10-Year U.S. Treasury Note"),
+        ("DXY", "098662", "U.S. Dollar Index"),
+        ("BTC", "133741", "Bitcoin CME"),
+    ];
+    let mut report = CollectionReport::default();
+    for (prefix, code, contract_name) in CONTRACTS {
+        let select = "report_date_as_yyyy_mm_dd,open_interest_all,asset_mgr_positions_long,asset_mgr_positions_short,lev_money_positions_long,lev_money_positions_short";
+        let where_clause = format!(
+            "cftc_contract_market_code='{}' AND report_date_as_yyyy_mm_dd >= '{}T00:00:00'",
+            code, start
+        );
+        let value: Value = http
+            .get("https://publicreporting.cftc.gov/resource/gpe5-46if.json")
+            .query(&[
+                ("$select", select.to_string()),
+                ("$where", where_clause),
+                ("$order", "report_date_as_yyyy_mm_dd ASC".to_string()),
+                ("$limit", "5000".to_string()),
+            ])
+            .send()?
+            .error_for_status()?
+            .json()?;
+        let rows = value.as_array().ok_or("CFTC response is not an array")?;
+        let mut latest = None;
+        for row in rows {
+            let Some(date) = row
+                .get("report_date_as_yyyy_mm_dd")
+                .and_then(Value::as_str)
+                .and_then(|value| value.get(..10))
+            else {
+                continue;
+            };
+            let Some(open_interest) = parse_number(row.get("open_interest_all")) else {
+                continue;
+            };
+            if open_interest <= 0.0 {
+                continue;
+            }
+            let asset_long = parse_number(row.get("asset_mgr_positions_long"));
+            let asset_short = parse_number(row.get("asset_mgr_positions_short"));
+            let lev_long = parse_number(row.get("lev_money_positions_long"));
+            let lev_short = parse_number(row.get("lev_money_positions_short"));
+            let definitions = [
+                (
+                    format!("{prefix}_OPEN_INTEREST"),
+                    Some(open_interest),
+                    "contracts",
+                    "CFTC open interest",
+                ),
+                (
+                    format!("{prefix}_ASSET_MGR_NET_PCT"),
+                    asset_long
+                        .zip(asset_short)
+                        .map(|(long, short)| 100.0 * (long - short) / open_interest),
+                    "percent_of_open_interest",
+                    "100 × (asset manager long - short) / open interest",
+                ),
+                (
+                    format!("{prefix}_LEV_MONEY_NET_PCT"),
+                    lev_long
+                        .zip(lev_short)
+                        .map(|(long, short)| 100.0 * (long - short) / open_interest),
+                    "percent_of_open_interest",
+                    "100 × (leveraged money long - short) / open interest",
+                ),
+            ];
+            for (series, number, unit, formula) in definitions {
+                let Some(number) = number else { continue };
+                put_public_observation(
+                    db,
+                    &mut report,
+                    "cftc",
+                    &series,
+                    date,
+                    number,
+                    json!({"contract_code": code, "contract": contract_name, "unit": unit, "formula": formula, "dataset": "TFF Futures Only"}),
+                );
+            }
+            if *prefix == "UST10Y" {
+                if let Some(net_contracts) =
+                    lev_long.zip(lev_short).map(|(long, short)| long - short)
+                {
+                    put_public_observation(
+                        db,
+                        &mut report,
+                        "cftc",
+                        "UST_NET_POSITION",
+                        date,
+                        net_contracts,
+                        json!({"contract_code": code, "contract": contract_name, "unit": "contracts", "formula": "leveraged money long - short", "dataset": "TFF Futures Only"}),
+                    );
+                }
+            }
+            latest = Some(date.to_string());
+        }
+        if let Some(latest) = latest {
+            for suffix in ["OPEN_INTEREST", "ASSET_MGR_NET_PCT", "LEV_MONEY_NET_PCT"] {
+                db.mark_series_checked("cftc", &format!("{prefix}_{suffix}"), &latest)?;
+            }
+            if *prefix == "UST10Y" {
+                db.mark_series_checked("cftc", "UST_NET_POSITION", &latest)?;
+            }
+        }
+    }
+    Ok(report)
+}
+
+fn collect_deribit_btc(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let mut report = CollectionReport::default();
+    let start_timestamp = NaiveDate::parse_from_str(start, "%Y-%m-%d")?
+        .and_hms_opt(0, 0, 0)
+        .ok_or("invalid Deribit start time")?
+        .and_utc()
+        .timestamp_millis();
+    let end_timestamp = Utc::now().timestamp_millis();
+    let dvol: Value = http
+        .get("https://www.deribit.com/api/v2/public/get_volatility_index_data")
+        .query(&[
+            ("currency", "BTC".to_string()),
+            ("start_timestamp", start_timestamp.to_string()),
+            ("end_timestamp", end_timestamp.to_string()),
+            ("resolution", "1D".to_string()),
+        ])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let mut latest_dvol = None;
+    if let Some(rows) = dvol.pointer("/result/data").and_then(Value::as_array) {
+        for row in rows {
+            let Some(row) = row.as_array() else { continue };
+            let Some(timestamp) = row.first().and_then(Value::as_i64) else {
+                continue;
+            };
+            let Some(close) = parse_number(row.get(4)) else {
+                continue;
+            };
+            let Some(date) = Utc.timestamp_millis_opt(timestamp).single() else {
+                continue;
+            };
+            let date = date.date_naive().to_string();
+            if date.as_str() < start {
+                continue;
+            }
+            put_public_observation(
+                db,
+                &mut report,
+                "deribit",
+                "BTC_DVOL",
+                &date,
+                close,
+                json!({"unit": "index", "field": "daily_close", "venue": "Deribit"}),
+            );
+            latest_dvol = Some(date);
+        }
+    }
+    if let Some(latest) = latest_dvol {
+        db.mark_series_checked("deribit", "BTC_DVOL", &latest)?;
+    }
+
+    let books: Value = http
+        .get("https://www.deribit.com/api/v2/public/get_book_summary_by_currency")
+        .query(&[("currency", "BTC"), ("kind", "option")])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let rows = books
+        .get("result")
+        .and_then(Value::as_array)
+        .ok_or("Deribit book summary result missing")?;
+    let mut put_oi = 0.0;
+    let mut call_oi = 0.0;
+    let mut volume_usd = 0.0;
+    let mut timestamp = 0_i64;
+    for row in rows {
+        let instrument = row
+            .get("instrument_name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let open_interest = parse_number(row.get("open_interest")).unwrap_or(0.0);
+        if instrument.ends_with("-P") {
+            put_oi += open_interest;
+        }
+        if instrument.ends_with("-C") {
+            call_oi += open_interest;
+        }
+        volume_usd += parse_number(row.get("volume_usd")).unwrap_or(0.0);
+        timestamp = timestamp.max(
+            row.get("creation_timestamp")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        );
+    }
+    let observed_at = Utc
+        .timestamp_millis_opt(timestamp)
+        .single()
+        .unwrap_or_else(Utc::now)
+        .to_rfc3339_opts(SecondsFormat::Secs, true);
+    let definitions = [
+        (
+            "BTC_OPTION_OI",
+            Some(put_oi + call_oi),
+            "btc",
+            "sum of listed BTC option open interest",
+        ),
+        (
+            "BTC_OPTION_PUT_CALL",
+            (call_oi > 0.0).then_some(put_oi / call_oi),
+            "ratio",
+            "put open interest / call open interest",
+        ),
+        (
+            "BTC_OPTION_VOLUME_USD",
+            Some(volume_usd),
+            "usd_24h",
+            "sum of 24h option volume_usd",
+        ),
+    ];
+    for (series, value, unit, formula) in definitions {
+        let Some(value) = value else { continue };
+        put_public_observation(
+            db,
+            &mut report,
+            "deribit",
+            series,
+            &observed_at,
+            value,
+            json!({"unit": unit, "formula": formula, "venue": "Deribit", "instruments": rows.len()}),
+        );
+        db.mark_series_checked("deribit", series, &observed_at)?;
+    }
+    Ok(report)
+}
+
+fn collect_coinmetrics(
+    http: &Client,
+    db: &Db,
+    start: &str,
+) -> Result<CollectionReport, Box<dyn Error>> {
+    let mut report = CollectionReport::default();
+    let btc_metrics = [
+        ("PriceUSD", "BTC_PRICE_USD", "usd"),
+        ("AdrActCnt", "BTC_ACTIVE_ADDRESSES", "addresses"),
+        ("TxCnt", "BTC_TX_COUNT", "transactions"),
+        ("CapMVRVCur", "BTC_MVRV", "ratio"),
+        ("FeeTotNtv", "BTC_FEES", "btc"),
+        ("HashRate", "BTC_HASH_RATE", "th_per_second"),
+        ("CapMrktCurUSD", "BTC_MARKET_CAP", "usd"),
+    ];
+    let btc: Value = http
+        .get("https://community-api.coinmetrics.io/v4/timeseries/asset-metrics")
+        .query(&[
+            ("assets", "btc"),
+            (
+                "metrics",
+                "PriceUSD,AdrActCnt,TxCnt,CapMVRVCur,FeeTotNtv,HashRate,CapMrktCurUSD",
+            ),
+            ("start_time", start),
+            ("frequency", "1d"),
+            ("page_size", "10000"),
+        ])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    if let Some(rows) = btc.get("data").and_then(Value::as_array) {
+        for row in rows {
+            let Some(date) = row
+                .get("time")
+                .and_then(Value::as_str)
+                .and_then(|value| value.get(..10))
+            else {
+                continue;
+            };
+            for (field, series, unit) in btc_metrics {
+                let Some(value) = parse_number(row.get(field)) else {
+                    continue;
+                };
+                put_public_observation(
+                    db,
+                    &mut report,
+                    "coinmetrics",
+                    series,
+                    date,
+                    value,
+                    json!({"asset": "btc", "metric": field, "unit": unit, "api": "community"}),
+                );
+                db.mark_series_checked("coinmetrics", series, date)?;
+            }
+        }
+    }
+
+    let stablecoins: Value = http
+        .get("https://community-api.coinmetrics.io/v4/timeseries/asset-metrics")
+        .query(&[
+            ("assets", "usdt,usdc"),
+            ("metrics", "CapMrktCurUSD"),
+            ("start_time", start),
+            ("frequency", "1d"),
+            ("page_size", "10000"),
+        ])
+        .send()?
+        .error_for_status()?
+        .json()?;
+    let mut totals: BTreeMap<String, (f64, usize)> = BTreeMap::new();
+    if let Some(rows) = stablecoins.get("data").and_then(Value::as_array) {
+        for row in rows {
+            let Some(date) = row
+                .get("time")
+                .and_then(Value::as_str)
+                .and_then(|value| value.get(..10))
+            else {
+                continue;
+            };
+            let Some(value) = parse_number(row.get("CapMrktCurUSD")) else {
+                continue;
+            };
+            let entry = totals.entry(date.into()).or_default();
+            entry.0 += value;
+            entry.1 += 1;
+        }
+    }
+    for (date, (value, components)) in totals.into_iter().filter(|(_, (_, count))| *count == 2) {
+        put_public_observation(
+            db,
+            &mut report,
+            "coinmetrics",
+            "STABLECOIN_CAP_USD",
+            &date,
+            value,
+            json!({"assets": ["usdt", "usdc"], "metric": "CapMrktCurUSD", "unit": "usd", "components": components}),
+        );
+        db.mark_series_checked("coinmetrics", "STABLECOIN_CAP_USD", &date)?;
     }
     Ok(report)
 }
@@ -1113,9 +1601,13 @@ fn collect_binance_live_with_client(http: &Client, db: &Db, report: &mut Collect
     }
 }
 
-const ECOS_SERIES: &[(&str, &str, &str)] = &[
-    ("KR_BASE_RATE", "722Y001", "0101000"),
-    ("KR_USD_KRW", "731Y001", "0000001"),
+const ECOS_SERIES: &[(&str, &str, &str, &str)] = &[
+    ("KR_BASE_RATE", "722Y001", "0101000", "D"),
+    ("KR_USD_KRW", "731Y001", "0000001", "D"),
+    ("KR_CPI", "901Y009", "0", "M"),
+    ("KR_M2", "161Y008", "BBGA00", "M"),
+    ("KR_KTB3Y", "817Y002", "010200000", "D"),
+    ("KR_KTB10Y", "817Y002", "010210000", "D"),
 ];
 
 pub fn collect_ecos(
@@ -1131,7 +1623,7 @@ pub fn collect_ecos(
     }
     let http = client(config)?;
     let mut report = CollectionReport::default();
-    for (series, stat, item) in ECOS_SERIES
+    for (series, stat, item, cycle) in ECOS_SERIES
         .iter()
         .copied()
         .filter(|definition| series_filter.is_none_or(|filter| definition.0 == filter))
@@ -1144,19 +1636,29 @@ pub fn collect_ecos(
             .and_then(|date| NaiveDate::parse_from_str(&date, "%Y-%m-%d").ok())
             .map(|date| date - ChronoDuration::days(14))
             .unwrap_or_else(|| NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
-        let start_date = start_date.format("%Y%m%d").to_string();
-        let end = end_date.format("%Y%m%d").to_string();
+        let (start_date, end) = if cycle == "M" {
+            (
+                start_date.format("%Y%m").to_string(),
+                end_date.format("%Y%m").to_string(),
+            )
+        } else {
+            (
+                start_date.format("%Y%m%d").to_string(),
+                end_date.format("%Y%m%d").to_string(),
+            )
+        };
         let page_size = 1_000usize;
         let mut start_row = 1usize;
         let mut total = usize::MAX;
         while start_row <= total {
             let end_row = start_row + page_size - 1;
             let url = format!(
-                "https://ecos.bok.or.kr/api/StatisticSearch/{}/json/kr/{}/{}/{}/D/{}/{}/{}",
+                "https://ecos.bok.or.kr/api/StatisticSearch/{}/json/kr/{}/{}/{}/{}/{}/{}/{}",
                 urlencoding::encode(key),
                 start_row,
                 end_row,
                 stat,
+                cycle,
                 start_date,
                 end,
                 item
@@ -1202,7 +1704,7 @@ pub fn collect_ecos(
                     released_at: None,
                     source_asof: Some(Utc::now().to_rfc3339()),
                     revision_id: Some(format!("value:{number:.17}")),
-                    metadata: json!({"stat_code":stat,"item_code":item}),
+                    metadata: json!({"stat_code":stat,"item_code":item,"cycle":cycle}),
                 }));
             }
             if rows.len() < page_size {
@@ -2426,6 +2928,8 @@ fn normalize_compact_date(date: &str) -> String {
         .collect::<String>();
     if digits.len() == 8 {
         format!("{}-{}-{}", &digits[..4], &digits[4..6], &digits[6..8])
+    } else if digits.len() == 6 {
+        format!("{}-{}-01", &digits[..4], &digits[4..6])
     } else {
         date.into()
     }
@@ -2454,6 +2958,7 @@ mod tests {
     #[test]
     fn compact_dates_are_normalized() {
         assert_eq!(normalize_compact_date("20260820"), "2026-08-20");
+        assert_eq!(normalize_compact_date("202606"), "2026-06-01");
         assert_eq!(normalize_compact_date("2026-08-20"), "2026-08-20");
     }
 

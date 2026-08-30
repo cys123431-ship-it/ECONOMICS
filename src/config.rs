@@ -119,7 +119,7 @@ impl Config {
                 .unwrap_or(30),
             krx_lookback_days: value("ECONOMICS_KRX_LOOKBACK_DAYS", &file)
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(60)
+                .unwrap_or(365)
                 .clamp(20, 365),
             refresh_minutes: value("ECONOMICS_REFRESH_MINUTES", &file)
                 .and_then(|value| value.parse().ok())

@@ -1,6 +1,7 @@
 use crate::{
     central_bank::{self, CentralBankLiquidity},
     db::{Db, Point},
+    forecast::{self, MarketForecast},
 };
 use chrono::{DateTime, FixedOffset, NaiveDate, Utc};
 use serde::Serialize;
@@ -66,6 +67,7 @@ pub struct DashboardIndicator {
 pub struct DashboardData {
     pub indicators: Vec<DashboardIndicator>,
     pub central_bank: CentralBankLiquidity,
+    pub forecasts: Vec<MarketForecast>,
 }
 
 const fn series(source: &'static str, name: &'static str) -> SeriesRef {
@@ -81,12 +83,25 @@ const FRED_DOW: &[SeriesRef] = &[series("fred", "DJIA")];
 const FRED_VIX: &[SeriesRef] = &[series("fred", "VIXCLS")];
 const FRED_DGS10: &[SeriesRef] = &[series("fred", "DGS10")];
 const FRED_DGS2: &[SeriesRef] = &[series("fred", "DGS2")];
+const FRED_DGS3MO: &[SeriesRef] = &[series("fred", "DGS3MO")];
+const FRED_DGS5: &[SeriesRef] = &[series("fred", "DGS5")];
+const FRED_DGS30: &[SeriesRef] = &[series("fred", "DGS30")];
+const FRED_REAL5Y: &[SeriesRef] = &[series("fred", "DFII5")];
+const FRED_REAL10Y: &[SeriesRef] = &[series("fred", "DFII10")];
+const FRED_BE5Y: &[SeriesRef] = &[series("fred", "T5YIE")];
+const FRED_BE10Y: &[SeriesRef] = &[series("fred", "T10YIE")];
+const FRED_FORWARD_INFLATION: &[SeriesRef] = &[series("fred", "T5YIFR")];
+const FRED_IORB: &[SeriesRef] = &[series("fred", "IORB")];
 const FRED_CURVE: &[SeriesRef] = &[series("fred", "T10Y2Y")];
 const FRED_HY: &[SeriesRef] = &[series("fred", "BAMLH0A0HYM2")];
 const FRED_USD: &[SeriesRef] = &[series("fred", "DTWEXBGS")];
 const TREASURY_BTC: &[SeriesRef] = &[series("treasury", "AUCTION_BTC")];
 const USD_KRW: &[SeriesRef] = &[series("ecos", "KR_USD_KRW"), series("fred", "DEXKOUS")];
 const KR_BASE_RATE: &[SeriesRef] = &[series("ecos", "KR_BASE_RATE")];
+const KR_CPI: &[SeriesRef] = &[series("ecos", "KR_CPI")];
+const KR_M2: &[SeriesRef] = &[series("ecos", "KR_M2")];
+const KR_KTB3Y: &[SeriesRef] = &[series("ecos", "KR_KTB3Y")];
+const KR_KTB10Y: &[SeriesRef] = &[series("ecos", "KR_KTB10Y")];
 const KOSPI: &[SeriesRef] = &[series("krx", "KRX_KOSPI_CLOSE")];
 const KOSDAQ: &[SeriesRef] = &[series("krx", "KRX_KOSDAQ_CLOSE")];
 const KOSPI_BREADTH: &[SeriesRef] = &[series("krx", "KRX_KOSPI_BREADTH")];
@@ -197,6 +212,38 @@ const BTC_SPOT_CHANGE: &[SeriesRef] = &[series("binance", "BTC_SPOT_CHANGE_24H")
 const BTC_MARK_PRICE: &[SeriesRef] = &[series("binance", "BTC_MARK_PRICE_USD")];
 const BTC_INDEX_PRICE: &[SeriesRef] = &[series("binance", "BTC_INDEX_PRICE_USD")];
 const BTC_CURRENT_FUNDING: &[SeriesRef] = &[series("binance", "BTC_CURRENT_FUNDING_RATE")];
+
+const OFR_SOFR: &[SeriesRef] = &[series("ofr_repo", "SOFR")];
+const OFR_EFFR: &[SeriesRef] = &[series("ofr_repo", "EFFR")];
+const OFR_SOFR_TAIL: &[SeriesRef] = &[series("ofr_repo", "SOFR_P99_SPREAD")];
+const OFR_SOFR_EFFR: &[SeriesRef] = &[series("ofr_repo", "SOFR_EFFR_SPREAD")];
+const OFR_SOFR_VOLUME: &[SeriesRef] = &[series("ofr_repo", "SOFR_VOLUME")];
+const OFR_REPO_OUTSTANDING: &[SeriesRef] = &[series("ofr_repo", "DVP_REPO_OUTSTANDING")];
+const OFR_REPO_VOLUME: &[SeriesRef] = &[series("ofr_repo", "DVP_REPO_VOLUME")];
+
+const CFTC_SPX_OI: &[SeriesRef] = &[series("cftc", "SPX_OPEN_INTEREST")];
+const CFTC_SPX_ASSET: &[SeriesRef] = &[series("cftc", "SPX_ASSET_MGR_NET_PCT")];
+const CFTC_SPX_LEV: &[SeriesRef] = &[series("cftc", "SPX_LEV_MONEY_NET_PCT")];
+const CFTC_NDX_ASSET: &[SeriesRef] = &[series("cftc", "NDX_ASSET_MGR_NET_PCT")];
+const CFTC_NDX_LEV: &[SeriesRef] = &[series("cftc", "NDX_LEV_MONEY_NET_PCT")];
+const CFTC_UST_ASSET: &[SeriesRef] = &[series("cftc", "UST10Y_ASSET_MGR_NET_PCT")];
+const CFTC_UST_LEV: &[SeriesRef] = &[series("cftc", "UST10Y_LEV_MONEY_NET_PCT")];
+const CFTC_DXY_LEV: &[SeriesRef] = &[series("cftc", "DXY_LEV_MONEY_NET_PCT")];
+const CFTC_BTC_OI: &[SeriesRef] = &[series("cftc", "BTC_OPEN_INTEREST")];
+const CFTC_BTC_LEV: &[SeriesRef] = &[series("cftc", "BTC_LEV_MONEY_NET_PCT")];
+
+const DERIBIT_DVOL: &[SeriesRef] = &[series("deribit", "BTC_DVOL")];
+const DERIBIT_OPTION_OI: &[SeriesRef] = &[series("deribit", "BTC_OPTION_OI")];
+const DERIBIT_PUT_CALL: &[SeriesRef] = &[series("deribit", "BTC_OPTION_PUT_CALL")];
+const DERIBIT_OPTION_VOLUME: &[SeriesRef] = &[series("deribit", "BTC_OPTION_VOLUME_USD")];
+
+const CM_BTC_ACTIVE: &[SeriesRef] = &[series("coinmetrics", "BTC_ACTIVE_ADDRESSES")];
+const CM_BTC_TX: &[SeriesRef] = &[series("coinmetrics", "BTC_TX_COUNT")];
+const CM_BTC_MVRV: &[SeriesRef] = &[series("coinmetrics", "BTC_MVRV")];
+const CM_BTC_FEES: &[SeriesRef] = &[series("coinmetrics", "BTC_FEES")];
+const CM_BTC_HASH_RATE: &[SeriesRef] = &[series("coinmetrics", "BTC_HASH_RATE")];
+const CM_BTC_MARKET_CAP: &[SeriesRef] = &[series("coinmetrics", "BTC_MARKET_CAP")];
+const CM_STABLECOIN_CAP: &[SeriesRef] = &[series("coinmetrics", "STABLECOIN_CAP_USD")];
 
 const INDICATORS: &[IndicatorDefinition] = &[
     indicator(
@@ -1546,6 +1593,498 @@ const INDICATORS: &[IndicatorDefinition] = &[
         2,
         "LIVE",
     ),
+    indicator(
+        "us3m",
+        "미국 3개월 국채 수익률",
+        "US3M",
+        "us",
+        "bonds",
+        FRED_DGS3MO,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us5y",
+        "미국 5년 국채 수익률",
+        "US5Y",
+        "us",
+        "bonds",
+        FRED_DGS5,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us30y",
+        "미국 30년 국채 수익률",
+        "US30Y",
+        "us",
+        "bonds",
+        FRED_DGS30,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us_real5y",
+        "미국 5년 물가연동국채 실질금리",
+        "REAL 5Y",
+        "us",
+        "bonds",
+        FRED_REAL5Y,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us_real10y",
+        "미국 10년 물가연동국채 실질금리",
+        "REAL 10Y",
+        "us",
+        "bonds",
+        FRED_REAL10Y,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us_be5y",
+        "미국 5년 기대인플레이션(Breakeven)",
+        "BEI 5Y",
+        "us",
+        "inflation",
+        FRED_BE5Y,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us_be10y",
+        "미국 10년 기대인플레이션(Breakeven)",
+        "BEI 10Y",
+        "us",
+        "inflation",
+        FRED_BE10Y,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "us_5y5y",
+        "미국 5년 후 5년 기대인플레이션",
+        "5Y5Y INF",
+        "us",
+        "inflation",
+        FRED_FORWARD_INFLATION,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "iorb",
+        "연준 지급준비금 이자율",
+        "IORB",
+        "us",
+        "funding",
+        FRED_IORB,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "kr_cpi",
+        "한국 소비자물가지수(2020=100)",
+        "KR CPI",
+        "korea",
+        "inflation",
+        KR_CPI,
+        "index",
+        2,
+        13,
+        "1M",
+    ),
+    indicator(
+        "kr_m2",
+        "한국 M2 말잔·원계열",
+        "KR M2",
+        "korea",
+        "liquidity",
+        KR_M2,
+        "krw_billion",
+        1,
+        13,
+        "1M",
+    ),
+    indicator(
+        "kr_ktb3y",
+        "한국 국고채 3년 수익률",
+        "KTB 3Y",
+        "korea",
+        "bonds",
+        KR_KTB3Y,
+        "percent",
+        3,
+        2,
+        "1D",
+    ),
+    indicator(
+        "kr_ktb10y",
+        "한국 국고채 10년 수익률",
+        "KTB 10Y",
+        "korea",
+        "bonds",
+        KR_KTB10Y,
+        "percent",
+        3,
+        2,
+        "1D",
+    ),
+    indicator(
+        "sofr",
+        "미국 담보부 익일물 조달금리",
+        "SOFR",
+        "funding",
+        "money_market",
+        OFR_SOFR,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "effr",
+        "미국 유효 연방기금금리",
+        "EFFR",
+        "funding",
+        "money_market",
+        OFR_EFFR,
+        "percent",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "sofr_tail",
+        "SOFR 99백분위-중앙값 스프레드",
+        "SOFR TAIL",
+        "funding",
+        "money_market",
+        OFR_SOFR_TAIL,
+        "percentage_points",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "sofr_effr",
+        "SOFR-EFFR 스프레드",
+        "SOFR-EFFR",
+        "funding",
+        "money_market",
+        OFR_SOFR_EFFR,
+        "percentage_points",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "sofr_volume",
+        "SOFR 기초거래 규모",
+        "SOFR VOL",
+        "funding",
+        "repo",
+        OFR_SOFR_VOLUME,
+        "usd",
+        0,
+        2,
+        "1D",
+    ),
+    indicator(
+        "repo_outstanding",
+        "미국 DVP 레포 미상환잔액",
+        "DVP REPO O/S",
+        "funding",
+        "repo",
+        OFR_REPO_OUTSTANDING,
+        "usd",
+        0,
+        5,
+        "1Q",
+    ),
+    indicator(
+        "repo_volume",
+        "미국 DVP 레포 분기 거래규모",
+        "DVP REPO VOL",
+        "funding",
+        "repo",
+        OFR_REPO_VOLUME,
+        "usd",
+        0,
+        5,
+        "1Q",
+    ),
+    indicator(
+        "cftc_spx_oi",
+        "CFTC E-mini S&P 500 선물 미결제약정",
+        "SPX OI",
+        "funding",
+        "positioning",
+        CFTC_SPX_OI,
+        "contracts",
+        0,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_spx_asset",
+        "CFTC S&P 500 자산운용사 순포지션/OI",
+        "SPX AM NET",
+        "funding",
+        "positioning",
+        CFTC_SPX_ASSET,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_spx_lev",
+        "CFTC S&P 500 레버리지펀드 순포지션/OI",
+        "SPX LEV NET",
+        "funding",
+        "positioning",
+        CFTC_SPX_LEV,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_ndx_asset",
+        "CFTC 나스닥100 자산운용사 순포지션/OI",
+        "NDX AM NET",
+        "funding",
+        "positioning",
+        CFTC_NDX_ASSET,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_ndx_lev",
+        "CFTC 나스닥100 레버리지펀드 순포지션/OI",
+        "NDX LEV NET",
+        "funding",
+        "positioning",
+        CFTC_NDX_LEV,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_ust_asset",
+        "CFTC 미 10년국채 자산운용사 순포지션/OI",
+        "10Y AM NET",
+        "funding",
+        "positioning",
+        CFTC_UST_ASSET,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_ust_lev",
+        "CFTC 미 10년국채 레버리지펀드 순포지션/OI",
+        "10Y LEV NET",
+        "funding",
+        "positioning",
+        CFTC_UST_LEV,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_dxy_lev",
+        "CFTC 달러지수 레버리지펀드 순포지션/OI",
+        "DXY LEV NET",
+        "funding",
+        "positioning",
+        CFTC_DXY_LEV,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_btc_oi",
+        "CFTC CME 비트코인 선물 미결제약정",
+        "BTC CME OI",
+        "funding",
+        "positioning",
+        CFTC_BTC_OI,
+        "contracts",
+        0,
+        2,
+        "1W",
+    ),
+    indicator(
+        "cftc_btc_lev",
+        "CFTC CME 비트코인 레버리지펀드 순포지션/OI",
+        "BTC LEV NET",
+        "funding",
+        "positioning",
+        CFTC_BTC_LEV,
+        "percent",
+        2,
+        2,
+        "1W",
+    ),
+    indicator(
+        "btc_dvol",
+        "Deribit 비트코인 옵션 내재변동성 지수",
+        "BTC DVOL",
+        "funding",
+        "options",
+        DERIBIT_DVOL,
+        "index",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_option_oi",
+        "Deribit BTC 옵션 전체 미결제약정",
+        "BTC OPT OI",
+        "funding",
+        "options",
+        DERIBIT_OPTION_OI,
+        "btc",
+        1,
+        2,
+        "LIVE",
+    ),
+    indicator(
+        "btc_option_put_call",
+        "Deribit BTC 옵션 풋/콜 미결제약정 비율",
+        "BTC P/C OI",
+        "funding",
+        "options",
+        DERIBIT_PUT_CALL,
+        "ratio",
+        2,
+        2,
+        "LIVE",
+    ),
+    indicator(
+        "btc_option_volume",
+        "Deribit BTC 옵션 24시간 거래대금",
+        "BTC OPT VOL",
+        "funding",
+        "options",
+        DERIBIT_OPTION_VOLUME,
+        "usd",
+        0,
+        2,
+        "LIVE 24H",
+    ),
+    indicator(
+        "btc_active_addresses",
+        "비트코인 일간 활성 주소 수",
+        "BTC ACTIVE",
+        "funding",
+        "onchain",
+        CM_BTC_ACTIVE,
+        "count",
+        0,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_tx_count",
+        "비트코인 일간 거래 수",
+        "BTC TX",
+        "funding",
+        "onchain",
+        CM_BTC_TX,
+        "count",
+        0,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_mvrv",
+        "비트코인 시가총액/실현총액(MVRV)",
+        "BTC MVRV",
+        "funding",
+        "onchain",
+        CM_BTC_MVRV,
+        "ratio",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_fees",
+        "비트코인 일간 총 수수료",
+        "BTC FEES",
+        "funding",
+        "onchain",
+        CM_BTC_FEES,
+        "btc",
+        2,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_hash_rate",
+        "비트코인 네트워크 해시레이트",
+        "BTC HASH",
+        "funding",
+        "onchain",
+        CM_BTC_HASH_RATE,
+        "hashrate_th",
+        0,
+        2,
+        "1D",
+    ),
+    indicator(
+        "btc_market_cap",
+        "비트코인 네트워크 시가총액",
+        "BTC MCAP",
+        "funding",
+        "onchain",
+        CM_BTC_MARKET_CAP,
+        "usd",
+        0,
+        2,
+        "1D",
+    ),
+    indicator(
+        "stablecoin_cap",
+        "USDT+USDC 합산 시가총액",
+        "STABLE CAP",
+        "funding",
+        "liquidity",
+        CM_STABLECOIN_CAP,
+        "usd",
+        0,
+        2,
+        "1D",
+    ),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -1583,6 +2122,7 @@ pub fn build_at(db: &Db, as_of: Option<&str>) -> rusqlite::Result<DashboardData>
     Ok(DashboardData {
         indicators,
         central_bank: central_bank::build(db, as_of)?,
+        forecasts: forecast::build(db, as_of)?,
     })
 }
 
@@ -1627,18 +2167,33 @@ fn cadence(selected: Option<SeriesRef>) -> &'static str {
     let Some(selected) = selected else {
         return "UNKNOWN";
     };
-    if selected.source == "binance" {
+    if selected.source == "binance" || selected.source == "deribit" && selected.series != "BTC_DVOL"
+    {
         return "INTRADAY";
     }
-    if selected.source == "krx" || selected.source == "ecos" && selected.series == "KR_USD_KRW" {
+    if selected.source == "krx"
+        || selected.source == "coinmetrics"
+        || selected.source == "ofr_repo"
+            && !matches!(selected.series, "DVP_REPO_OUTSTANDING" | "DVP_REPO_VOLUME")
+        || selected.source == "deribit"
+        || selected.source == "ecos"
+            && matches!(selected.series, "KR_USD_KRW" | "KR_KTB3Y" | "KR_KTB10Y")
+    {
         return "DAILY";
     }
+    if selected.source == "cftc" {
+        return "WEEKLY";
+    }
     match selected.series {
-        "DRCCLACBS" | "DRCLACBS" | "EQTA" | "GLOBAL_DOLLAR_CREDIT" | "MARGIN_TIGHTENING" => {
-            "QUARTERLY"
-        }
+        "DRCCLACBS"
+        | "DRCLACBS"
+        | "EQTA"
+        | "GLOBAL_DOLLAR_CREDIT"
+        | "MARGIN_TIGHTENING"
+        | "DVP_REPO_OUTSTANDING"
+        | "DVP_REPO_VOLUME" => "QUARTERLY",
         "CFNAI" | "SAHMREALTIME" | "BUSLOANS" | "TOTRESNS" | "KORLOLITOAASTSAM"
-        | "CHNLOLITOAASTSAM" | "KR_BASE_RATE" => "MONTHLY",
+        | "CHNLOLITOAASTSAM" | "KR_BASE_RATE" | "KR_CPI" | "KR_M2" => "MONTHLY",
         "WEI" | "ICSA" | "CCSA" | "STLFSI4" | "NFCI" | "ANFCI" | "NFCILEVERAGE"
         | "MORTGAGE30US" | "WALCL" | "WRESBAL" | "TOTLL" | "DEALER_FAILS" => "WEEKLY",
         _ => "DAILY",
@@ -1651,7 +2206,10 @@ fn max_age_days(selected: Option<SeriesRef>) -> i64 {
         "DAILY" => 10,
         "WEEKLY" => 18,
         "MONTHLY" => 75,
-        "QUARTERLY" => 150,
+        // Final OFR repo vintages can arrive well after quarter end. Do not flag a
+        // still-current quarterly release as stale merely because publication lag
+        // crossed five months.
+        "QUARTERLY" => 200,
         _ => 10,
     }
 }
@@ -1664,7 +2222,10 @@ fn freshness(
     let Some(point) = point else {
         return Ok("NO DATA".into());
     };
-    if selected.is_some_and(|value| value.source.eq_ignore_ascii_case("binance")) {
+    if selected.is_some_and(|value| {
+        value.source.eq_ignore_ascii_case("binance")
+            || value.source.eq_ignore_ascii_case("deribit") && value.series != "BTC_DVOL"
+    }) {
         if let Some(observed) = timestamp(&point.observed_at) {
             let age = Utc::now().signed_duration_since(observed).num_seconds();
             if age <= 120 {
