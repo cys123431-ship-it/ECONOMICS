@@ -1747,6 +1747,7 @@ struct KrxService {
 
 const KRX_INCREMENTAL_OVERLAP_DAYS: i64 = 7;
 const KRX_FORECAST_HISTORY_SERIES: &[&str] = &["KRX_KOSPI_CLOSE", "KRX_KOSDAQ_CLOSE"];
+const KRX_FORECAST_LOOKBACK_DAYS: usize = 1_825;
 
 const KRX_SERVICES: &[KrxService] = &[
     KrxService {
@@ -2021,13 +2022,19 @@ fn krx_query_dates(
             .filter(|date| !matches!(date.weekday(), Weekday::Sat | Weekday::Sun))
             .collect());
     }
-    let history_floor = today - ChronoDuration::days(initial_lookback_days as i64);
-    let forecast_history_missing = if KRX_FORECAST_HISTORY_SERIES.contains(&primary_series) {
+    let forecast_series = KRX_FORECAST_HISTORY_SERIES.contains(&primary_series);
+    let target_lookback_days = if forecast_series {
+        initial_lookback_days.max(KRX_FORECAST_LOOKBACK_DAYS)
+    } else {
+        initial_lookback_days
+    };
+    let history_floor = today - ChronoDuration::days(target_lookback_days as i64);
+    let forecast_history_missing = if forecast_series {
         let oldest = db
             .recent(
                 "krx",
                 primary_series,
-                initial_lookback_days.saturating_add(30),
+                target_lookback_days.saturating_add(366),
                 None,
             )?
             .first()
@@ -3074,9 +3081,12 @@ mod tests {
         let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let dates = krx_query_dates(&db, "KRX_KOSPI_CLOSE", today, 365, KrxHistory::Full).unwrap();
         assert_eq!(
-            dates.first().copied(),
-            Some(NaiveDate::from_ymd_opt(2025, 8, 20).unwrap())
+            dates.first().copied().unwrap(),
+            (today - ChronoDuration::days(KRX_FORECAST_LOOKBACK_DAYS as i64))
+                .checked_add_days(chrono::Days::new(2))
+                .unwrap()
         );
+        assert!(dates.len() > 1_200);
         assert_eq!(dates.last().copied(), Some(today));
     }
 
@@ -3085,11 +3095,12 @@ mod tests {
         let temporary = tempfile::tempdir().unwrap();
         let db = Db::open(&temporary.path().join("krx.db")).unwrap();
         let mut report = CollectionReport::default();
+        let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         store_krx_value(
             &db,
             &mut report,
             "KRX_KOSPI_CLOSE",
-            NaiveDate::from_ymd_opt(2025, 8, 20).unwrap(),
+            today - ChronoDuration::days(KRX_FORECAST_LOOKBACK_DAYS as i64),
             2600.0,
             Value::Null,
         );
@@ -3102,7 +3113,6 @@ mod tests {
             3200.0,
             Value::Null,
         );
-        let today = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
         let dates = krx_query_dates(&db, "KRX_KOSPI_CLOSE", today, 365, KrxHistory::Full).unwrap();
         assert_eq!(
             dates.first().copied(),

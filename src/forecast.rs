@@ -3,6 +3,7 @@ use serde::Serialize;
 use std::{cmp::Ordering, collections::BTreeMap};
 
 const MIN_FEATURE_POINTS: usize = 64;
+const MIN_HISTORY_POINTS: usize = 700;
 const MIN_NEIGHBORS: usize = 30;
 const MAX_NEIGHBORS: usize = 80;
 
@@ -40,7 +41,7 @@ pub struct ForecastHorizon {
     pub validation_samples: usize,
     pub validation_hit_rate: Option<f64>,
     pub validation_brier: Option<f64>,
-    pub uniform_brier: f64,
+    pub naive_brier: f64,
     pub validation_state: &'static str,
     pub warning: &'static str,
 }
@@ -120,7 +121,7 @@ fn build_market(
     let dates = daily.keys().cloned().collect::<Vec<_>>();
     let prices = daily.values().copied().collect::<Vec<_>>();
     let source_series = format!("{}:{}", config.source, config.series);
-    if prices.len() < MIN_FEATURE_POINTS + MIN_NEIGHBORS + 21 {
+    if prices.len() < MIN_HISTORY_POINTS.max(MIN_FEATURE_POINTS + MIN_NEIGHBORS + 21) {
         return Ok(MarketForecast {
             market: config.market,
             label: config.label,
@@ -165,10 +166,12 @@ fn build_market(
             );
             let dominant = dominant_direction(distribution.probabilities);
             let validation_state = match validation {
-                Some((_, brier, samples)) if samples >= 50 && brier < 2.0 / 3.0 => {
-                    "VALIDATED / BEATS UNIFORM"
+                Some((_, brier, naive_brier, samples))
+                    if samples >= 50 && brier < naive_brier =>
+                {
+                    "VALIDATED / BEATS NAIVE"
                 }
-                Some((_, _, samples)) if samples >= 50 => "VALIDATED / NO EDGE VS UNIFORM",
+                Some((_, _, _, samples)) if samples >= 50 => "VALIDATED / NO EDGE VS NAIVE",
                 _ => "VALIDATION INSUFFICIENT",
             };
             Some(ForecastHorizon {
@@ -181,10 +184,10 @@ fn build_market(
                 expected_return_percent: distribution.expected_return * 100.0,
                 analog_samples: distribution.samples,
                 average_distance: distribution.average_distance,
-                validation_samples: validation.map(|value| value.2).unwrap_or(0),
+                validation_samples: validation.map(|value| value.3).unwrap_or(0),
                 validation_hit_rate: validation.map(|value| value.0 * 100.0),
                 validation_brier: validation.map(|value| value.1),
-                uniform_brier: 2.0 / 3.0,
+                naive_brier: validation.map(|value| value.2).unwrap_or(2.0 / 3.0),
                 validation_state,
                 warning: "유사국면의 조건부 빈도이며 보장된 수익확률이 아닙니다. 검증이 기준모형을 이기지 못하면 방향판단에 사용하지 마세요.",
             })
@@ -313,7 +316,7 @@ fn validate(
     horizon: usize,
     flat_band: f64,
     scales: [f64; 4],
-) -> Option<(f64, f64, usize)> {
+) -> Option<(f64, f64, f64, usize)> {
     if prices.len() < 180 + horizon {
         return None;
     }
@@ -322,6 +325,7 @@ fn validate(
         (MIN_FEATURE_POINTS + MIN_NEIGHBORS + horizon).max(last_origin.saturating_sub(119));
     let mut correct = 0_usize;
     let mut brier = 0.0;
+    let mut naive_brier = 0.0;
     let mut count = 0_usize;
     for origin in first_origin..=last_origin {
         let Some(distribution) = analog_distribution(
@@ -337,6 +341,13 @@ fn validate(
         };
         let realized = prices[origin + horizon] / prices[origin] - 1.0;
         let outcome = outcome_index(realized, flat_band);
+        let mut naive_counts = [1.0_f64; 3];
+        for index in MIN_FEATURE_POINTS..=origin.saturating_sub(horizon) {
+            let historical_return = prices[index + horizon] / prices[index] - 1.0;
+            naive_counts[outcome_index(historical_return, flat_band)] += 1.0;
+        }
+        let naive_total = naive_counts.iter().sum::<f64>();
+        let naive_probabilities = naive_counts.map(|value| value / naive_total);
         let predicted = distribution
             .probabilities
             .iter()
@@ -354,9 +365,22 @@ fn validate(
                 (probability - actual).powi(2)
             })
             .sum::<f64>();
+        naive_brier += naive_probabilities
+            .iter()
+            .enumerate()
+            .map(|(index, probability)| {
+                let actual = if index == outcome { 1.0 } else { 0.0 };
+                (probability - actual).powi(2)
+            })
+            .sum::<f64>();
         count += 1;
     }
-    (count > 0).then_some((correct as f64 / count as f64, brier / count as f64, count))
+    (count > 0).then_some((
+        correct as f64 / count as f64,
+        brier / count as f64,
+        naive_brier / count as f64,
+        count,
+    ))
 }
 
 fn dominant_direction(probabilities: [f64; 3]) -> &'static str {

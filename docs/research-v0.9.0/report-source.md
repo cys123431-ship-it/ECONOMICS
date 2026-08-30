@@ -74,7 +74,7 @@ The Federal Reserve's May 2026 financial-stability framework monitors four broad
 | On-chain/liquidity blind spot | Coin Metrics community API | MVRV, active addresses, transactions, fees, hash rate, USDT+USDC cap | Network/liquidity context, not guaranteed direction |
 | Korean macro/rates gaps | ECOS official catalog | CPI, M2, 3Y and 10Y government yields, 10Y-3Y curve | Publication cadence shown explicitly |
 | Incomplete keyboard UX | Local semantic audit | Arrow/Home/End tabs, F6 workspace, focus state, reduced-motion support | Accessibility/workflow enhancement |
-| Ambiguous prediction claims | Forecast-calibration and backtest-overfit literature | Named horizons; rise/sideways/fall probabilities; explicit flat bands; rolling out-of-time Brier score and hit rate; no forecast when history is insufficient | Conditional empirical frequency, not guaranteed return probability |
+| Ambiguous prediction claims | Forecast-calibration and backtest-overfit literature | Named horizons; rise/sideways/fall probabilities; explicit flat bands; minimum 700 sessions; rolling out-of-time Brier score and hit rate against the prior class-frequency baseline; no forecast when history is insufficient | Conditional empirical frequency, not guaranteed return probability |
 
 ## Product rules
 
@@ -83,7 +83,7 @@ The Federal Reserve's May 2026 financial-stability framework monitors four broad
 3. Price direction remains only rising, falling, or sideways. Risk/funding/positioning measures must not be labeled as certain market direction.
 4. Derived values must name their formula in the UI or methodology copy.
 5. The default view prioritizes abnormal, stale, and pinned metrics; the complete view remains available in one action.
-6. Every forecast must state the asset, target horizon, sideways threshold, sample count, validation window, and naive baseline.
+6. Every forecast must state the asset, target horizon, sideways threshold, sample count, validation window, and prior class-frequency baseline.
 7. A forecast without sufficient history or without out-of-time baseline advantage is labeled observation-only; it must not be promoted as a directional edge.
 
 ## Acceptance criteria
@@ -95,4 +95,4 @@ The Federal Reserve's May 2026 financial-stability framework monitors four broad
 - Monthly and weekly cadence is reflected in freshness instead of being mislabeled stale.
 - Tab keyboard navigation and visible focus work without a mouse.
 - Rust tests, dashboard smoke tests, and a live installed-build browser check pass.
-- Experimental forecasts report 1/5/21-session rise/sideways/fall probabilities, explicit bands, analog counts, rolling validation hit rate, and multiclass Brier error against the uniform baseline.
+- Experimental forecasts report 1/5/21-session rise/sideways/fall probabilities, explicit bands, analog counts, rolling validation hit rate, and multiclass Brier error against the prior class-frequency baseline.
