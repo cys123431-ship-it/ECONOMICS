@@ -6,6 +6,7 @@ const MIN_FEATURE_POINTS: usize = 64;
 const MIN_HISTORY_POINTS: usize = 700;
 const MIN_NEIGHBORS: usize = 30;
 const MAX_NEIGHBORS: usize = 80;
+const MIN_BRIER_IMPROVEMENT: f64 = 0.005;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct MarketForecast {
@@ -42,6 +43,7 @@ pub struct ForecastHorizon {
     pub validation_hit_rate: Option<f64>,
     pub validation_brier: Option<f64>,
     pub naive_brier: f64,
+    pub brier_improvement: Option<f64>,
     pub validation_state: &'static str,
     pub warning: &'static str,
 }
@@ -165,15 +167,7 @@ fn build_market(
                 config.distance_scales,
             );
             let dominant = dominant_direction(distribution.probabilities);
-            let validation_state = match validation {
-                Some((_, brier, naive_brier, samples))
-                    if samples >= 50 && brier < naive_brier =>
-                {
-                    "VALIDATED / BEATS NAIVE"
-                }
-                Some((_, _, _, samples)) if samples >= 50 => "VALIDATED / NO EDGE VS NAIVE",
-                _ => "VALIDATION INSUFFICIENT",
-            };
+            let validation_state = validation_label(validation);
             Some(ForecastHorizon {
                 horizon_days: horizon,
                 flat_band_percent: flat_band * 100.0,
@@ -188,6 +182,7 @@ fn build_market(
                 validation_hit_rate: validation.map(|value| value.0 * 100.0),
                 validation_brier: validation.map(|value| value.1),
                 naive_brier: validation.map(|value| value.2).unwrap_or(2.0 / 3.0),
+                brier_improvement: validation.map(|value| value.2 - value.1),
                 validation_state,
                 warning: "유사국면의 조건부 빈도이며 보장된 수익확률이 아닙니다. 검증이 기준모형을 이기지 못하면 방향판단에 사용하지 마세요.",
             })
@@ -203,7 +198,7 @@ fn build_market(
         } else {
             "EXPERIMENTAL / WALK-FORWARD CHECKED"
         },
-        methodology: "현재 1주·1개월·3개월 수익률과 20일 실현변동성이 비슷했던 과거 구간을 거리순으로 최대 80개 선택하고, 유사도 가중 이후 수익률을 상승·횡보·하락 빈도로 변환합니다. 최근 최대 120개 시점은 당시 이용 가능 데이터만으로 순차 검증합니다.",
+        methodology: "현재 1주·1개월·3개월 수익률과 20일 실현변동성이 비슷했던 과거 구간을 거리순으로 최대 80개 선택하고, 유사도 가중 이후 수익률을 상승·횡보·하락 빈도로 변환합니다. 최근 최대 120개 시점은 당시 이용 가능 데이터만으로 순차 검증하며 Brier가 단순 방향빈도보다 0.005 이상 낮아야 우위로 인정합니다.",
         current_regime: Some(current_regime),
         horizons,
     })
@@ -402,6 +397,18 @@ fn dominant_direction(probabilities: [f64; 3]) -> &'static str {
     }
 }
 
+fn validation_label(validation: Option<(f64, f64, f64, usize)>) -> &'static str {
+    match validation {
+        Some((_, brier, naive_brier, samples))
+            if samples >= 50 && brier + MIN_BRIER_IMPROVEMENT < naive_brier =>
+        {
+            "VALIDATED / BEATS NAIVE"
+        }
+        Some((_, _, _, samples)) if samples >= 50 => "VALIDATED / NO EDGE VS NAIVE",
+        _ => "VALIDATION INSUFFICIENT",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,5 +438,17 @@ mod tests {
         )
         .expect("synthetic trend should have analogs");
         assert!((forecast.probabilities.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rounded_equal_brier_does_not_claim_validation_edge() {
+        assert_eq!(
+            validation_label(Some((0.42, 0.6546, 0.6549, 120))),
+            "VALIDATED / NO EDGE VS NAIVE"
+        );
+        assert_eq!(
+            validation_label(Some((0.42, 0.610, 0.640, 120))),
+            "VALIDATED / BEATS NAIVE"
+        );
     }
 }

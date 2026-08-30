@@ -84,7 +84,7 @@ The Federal Reserve's May 2026 financial-stability framework monitors four broad
 4. Derived values must name their formula in the UI or methodology copy.
 5. The default view prioritizes abnormal, stale, and pinned metrics; the complete view remains available in one action.
 6. Every forecast must state the asset, target horizon, sideways threshold, sample count, validation window, and prior class-frequency baseline.
-7. A forecast without sufficient history or without out-of-time baseline advantage is labeled observation-only; it must not be promoted as a directional edge.
+7. A forecast without sufficient history or at least a 0.005 out-of-time Brier advantage over the prior class-frequency baseline is labeled observation-only; it must not be promoted as a directional edge.
 
 ## Acceptance criteria
 

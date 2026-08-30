@@ -1,8 +1,12 @@
 # ECONOMICS Radar
 
-> v0.9.3: 검색·예외감시·자금·포지션·검증형 확률예측을 결합한 시장 의사결정 터미널
+> v0.9.4: 검색·예외감시·자금·포지션·검증형 확률예측을 결합한 시장 의사결정 터미널
 
 시장·거시경제 위험을 공식 데이터와 발표 시점 기준으로 평가하는 Rust/SQLite 감시기입니다.
+
+## v0.9.4
+
+반올림하면 Brier 오차가 기준과 똑같아 보이는데도 `검증우위 있음`으로 표시되는 경계를 제거했습니다. 단순 방향빈도 기준보다 Brier가 최소 0.005 낮아야만 우위로 인정하고, 화면에 개선폭을 함께 표시합니다.
 
 ## v0.9.3
 
@@ -163,7 +167,7 @@ FRED 현재값은 자동 갱신합니다. ALFRED는 과거 시점 재현용 빈�
 
 ## Windows 빠른 시작
 
-Release의 `EconomicsRadar-v0.9.3-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
+Release의 `EconomicsRadar-v0.9.4-Windows-x64.zip`을 별도 폴더에 풀고 PowerShell에서 실행합니다.
 
 ```powershell
 Copy-Item .env.example .env

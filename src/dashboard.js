@@ -1199,13 +1199,14 @@ function forecastHorizonCard(horizon) {
     ['횡보기준', `±${Number(horizon.flat_band_percent || 0).toFixed(2)}%`],
     ['유사국면', `${horizon.analog_samples || 0}개`],
     ['순차검증 적중', finite(horizon.validation_hit_rate) === null ? '검증부족' : `${Number(horizon.validation_hit_rate).toFixed(1)}%`],
-    ['Brier / 단순빈도', finite(horizon.validation_brier) === null ? '—' : `${Number(horizon.validation_brier).toFixed(3)} / ${Number(horizon.naive_brier).toFixed(3)}`]
+    ['Brier / 단순빈도', finite(horizon.validation_brier) === null ? '—' : `${Number(horizon.validation_brier).toFixed(3)} / ${Number(horizon.naive_brier).toFixed(3)}`],
+    ['Brier 개선폭', finite(horizon.brier_improvement) === null ? '—' : `${Number(horizon.brier_improvement) >= 0 ? '+' : ''}${Number(horizon.brier_improvement).toFixed(3)}`]
   ]) {
     metrics.append(el('dt', '', label), el('dd', '', value));
   }
   card.append(metrics);
   const validation = el('p', `forecast-validation ${validationGood ? 'good' : 'weak'}`,
-    validationGood ? '과거 순차검증에서 당시 단순빈도보다 오차가 작음' : '검증 우위 없음 또는 표본 부족 · 방향판단에 사용 금지');
+    validationGood ? '단순빈도보다 Brier가 0.005 이상 낮음 · 검증우위 있음' : '개선폭 0.005 미만 또는 표본 부족 · 방향판단에 사용 금지');
   card.append(validation, el('small', 'forecast-warning', horizon.warning));
   return card;
 }

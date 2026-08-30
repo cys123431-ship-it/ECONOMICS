@@ -260,7 +260,7 @@ const payload = {
         rise_probability: 46, sideways_probability: 29, fall_probability: 25,
         dominant_direction: '상승', expected_return_percent: 0.7, analog_samples: 80,
         average_distance: 0.9, validation_samples: 120, validation_hit_rate: 44,
-        validation_brier: 0.61, naive_brier: 0.64,
+        validation_brier: 0.61, naive_brier: 0.64, brier_improvement: 0.03,
         validation_state: 'VALIDATED / BEATS NAIVE',
         warning: '유사국면의 조건부 빈도이며 보장된 수익확률이 아닙니다.'
       }]
@@ -356,7 +356,7 @@ for (const id of ['terminalSearch', 'forecastOverview', 'fundingMarket']) {
 if (!html.includes('F6 자금·포지션')) {
   throw new Error('F6 funding and positioning workspace is missing');
 }
-if (!dashboardJs.includes('Brier / 단순빈도') || !dashboardJs.includes('방향판단에 사용 금지')) {
+if (!dashboardJs.includes('Brier / 단순빈도') || !dashboardJs.includes('Brier 개선폭') || !dashboardJs.includes('방향판단에 사용 금지')) {
   throw new Error('forecast validation boundary is not explicit');
 }
 if (html.includes('tradingview-widget.com')) {
