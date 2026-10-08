@@ -1,0 +1,46 @@
+name: Macro Report Test
+on:
+  push:
+    branches: [test/macro-report-actions-20261009]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pdf-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ECONOMICS_DB: runtime/economics.db
+      ECONOMICS_HTTP_TIMEOUT_SECS: '15'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PDF dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fonts-nanum
+          python -m pip install reportlab matplotlib
+      - name: Build Rust program
+        run: cargo build --locked --release
+      - name: Collect real public data
+        run: |
+          mkdir -p runtime
+          timeout 240s target/release/EconomicsRadar collect-official > runtime/collector.log 2>&1 || echo "Some collectors did not complete; consult coverage report."
+          target/release/EconomicsRadar run > runtime/engine.json 2>/dev/null || true
+      - name: Produce PDF and three PNGs
+        run: |
+          python scripts/report_smoke.py --db runtime/economics.db --out macro-report-smoke
+          test -s macro-report-smoke/2026_Macro_Actions_Smoke.pdf
+          test -s macro-report-smoke/01_market.png
+          test -s macro-report-smoke/02_macro.png
+          test -s macro-report-smoke/03_crypto.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macro-smoke-results
+          path: macro-report-smoke/
+          retention-days: 7
